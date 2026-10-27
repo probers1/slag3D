@@ -1,0 +1,31 @@
+services:
+  slag3d:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: slag3d:latest
+    container_name: slag3d_vault
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - SESSION_SECRET=slag3d_production_secure_vault_secret_2026
+    volumes:
+      # Persistent SQLite database storage
+      - slag3d_data:/data
+      # Persistent uploaded 3D assets and 512x512 rendered thumbnails
+      - slag3d_uploads:/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  slag3d_data:
+    name: slag3d_vault_data
+  slag3d_uploads:
+    name: slag3d_vault_uploads

@@ -1,0 +1,6 @@
+{
+  "name": "SLAG3D - 3D Printer Model Tracking & Asset Grid",
+  "description": "Modern multi-user 3D printer model tracking dashboard and mesh repository featuring headless 512x512 thumbnail renders, interactive Three.js inspection, and hierarchical collections.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
