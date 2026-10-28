@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "GOOSE_SEED_DB=true tsx server.ts",
     "build": "vite build",
     "start": "tsx server.ts",
     "preview": "vite preview",
@@ -20,7 +20,9 @@
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "express-session": "^1.19.0",
+    "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.546.0",
+    "magic-js": "^0.0.1",
     "motion": "^12.23.24",
     "multer": "^2.5.0",
     "node-stream-zip": "^1.16.0",

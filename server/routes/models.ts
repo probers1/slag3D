@@ -178,7 +178,11 @@ router.get('/', (req, res) => {
 
 // POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z)
 router.post('/', uploadMiddleware.array('files', 20), async (req, res) => {
-  const userId = req.session.userId!;
+  // Make sure userId exists even if session doesn't match request object
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
   const { title, description = '', tags = '', collection_id } = req.body;
 
   const files = (req.files as Express.Multer.File[]) || [];
@@ -228,7 +232,10 @@ router.post('/', uploadMiddleware.array('files', 20), async (req, res) => {
 // GET /api/models/:id — Full details, file paths, tags, collections
 router.get('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare(`
     SELECT 
@@ -281,8 +288,11 @@ router.get('/:id', (req, res) => {
 // PUT /api/models/:id — Updates title, description, tags, primary 3D file
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
   const { title, description, tags, primary_file_id } = req.body;
 
   const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
@@ -322,8 +332,11 @@ router.put('/:id', (req, res) => {
 // DELETE /api/models/:id — Purges model record, files, and thumbnail from disk
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id, user_id, title FROM models WHERE id = ?').get(id) as { id: string; user_id: string; title: string } | undefined;
   if (!model) {
@@ -363,7 +376,10 @@ router.delete('/:id', (req, res) => {
 // POST /api/models/:id/favorite — Toggles favorite status
 router.post('/:id/favorite', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id FROM models WHERE id = ?').get(id);
   if (!model) {
@@ -384,8 +400,11 @@ router.post('/:id/favorite', (req, res) => {
 // POST /api/models/:id/regenerate-thumbnail — Manually re-queues render job
 router.post('/:id/regenerate-thumbnail', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
   if (!model) {
@@ -420,8 +439,11 @@ router.post('/:id/regenerate-thumbnail', (req, res) => {
 // POST /api/models/:id/thumbnail-client — Client Three.js snapshot capture fallback
 router.post('/:id/thumbnail-client', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
   const { imageBase64 } = req.body;
 
   if (!imageBase64 || !imageBase64.includes('base64,')) {

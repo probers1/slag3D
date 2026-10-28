@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
+import jwt from 'jsonwebtoken'; // Added missing import
 
 declare module 'express-session' {
   interface SessionData {
@@ -9,13 +10,19 @@ declare module 'express-session' {
   }
 }
 
-// Global middleware to resolve user from either session or Authorization / x-auth-token header
+// Global middleware to resolve user from JWT token header
 export function authResolverMiddleware(req: Request, res: Response, next: NextFunction) {
-  if (req.session && req.session.userId) {
+  // 1. Bypass auth resolution for internal/non-user requests (like health checks or general API endpoints)
+  // We only attempt to resolve the user if the request explicitly targets auth or carries a token.
+  const isAuthRelatedPath = req.path.startsWith('/api/auth');
+  const hasToken = !!req.headers.authorization || !!req.headers['x-auth-token'];
+  
+  if (!isAuthRelatedPath && !hasToken) {
+    console.log(`Skipping authentication middleware for path: ${req.path}`);
     return next();
   }
 
-  // Check Authorization header or x-auth-token
+  // 3. Check Authorization header or x-auth-token (Handles initial login/iframe loads)
   const authHeader = req.headers.authorization;
   let token: string | undefined;
 
@@ -27,23 +34,18 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
 
   if (token) {
     try {
-      const user = db.prepare(`
-        SELECT u.id, u.username, u.role
-        FROM auth_tokens t
-        JOIN users u ON u.id = t.user_id
-        WHERE t.token = ?
-      `).get(token) as { id: string; username: string; role: 'admin' | 'user' } | undefined;
-
-      if (user) {
-        if (!req.session) {
-          (req as any).session = {};
-        }
-        req.session.userId = user.id;
-        req.session.username = user.username;
-        req.session.userRole = user.role;
-      }
+      // Verify JWT token
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
+      
+      // Set user fields in request for use in other middleware
+      (req as any).userId = decoded.userId;
+      (req as any).username = decoded.username;
+      (req as any).role = decoded.role;
+      
+      // For debugging - log that we successfully decoded the token
+      console.log('Successfully decoded JWT token for user:', decoded.userId);
     } catch (err) {
-      console.warn('Error resolving auth token:', err);
+      console.warn('Error verifying JWT token:', err);
     }
   }
 
@@ -51,17 +53,17 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.session || !req.session.userId) {
+  if (!req.userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   next();
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  if (!req.session || !req.session.userId) {
+  if (!req.userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
-  if (req.session.userRole !== 'admin') {
+  if (req.role !== 'admin') {
     return res.status(403).json({ error: 'Administrator privilege required' });
   }
   next();

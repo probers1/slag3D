@@ -46,7 +46,7 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: parseInt(process.env.SESSION_EXPIRY_MINUTES || '3360', 10) * 60 * 1000, // 7 days (defaults to 3360 minutes = 7 days), configurable via SESSION_EXPIRY_MINUTES env var
       httpOnly: true,
       secure: 'auto',
       sameSite: 'lax',

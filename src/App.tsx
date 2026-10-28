@@ -37,7 +37,7 @@ export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
-  // Check auth status on mount or auto-login with default admin
+  // Check auth status on mount
   const checkAuth = async () => {
     try {
       const res = await apiFetch('/api/auth/me');
@@ -50,29 +50,12 @@ export default function App() {
           return;
         }
       }
-    } catch {}
-
-    // Auto-login with default admin credentials if no valid session
-    try {
-      const loginRes = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: 'admin123' }),
-        credentials: 'include',
-      });
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        if (loginData.token) setStoredToken(loginData.token);
-        if (loginData.user) {
-          setCurrentUser(loginData.user);
-          setStoredUser(loginData.user);
-        }
-      }
     } catch (err) {
-      console.error('Auto-login error:', err);
-    } finally {
-      setAuthChecked(true);
+      console.warn('[SLAG3D] Auth check failed, showing login prompt:', err);
     }
+
+    // Set authenticated state as false if no valid session found
+    setAuthChecked(true); // Mark auth check complete so we render the proper UI
   };
 
   useEffect(() => {

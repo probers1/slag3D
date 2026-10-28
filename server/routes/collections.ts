@@ -8,7 +8,7 @@ router.use(requireAuth);
 
 // GET /api/collections
 router.get('/', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
 
   // Retrieve user collections and model counts
   const collections = db.prepare(`
@@ -31,7 +31,7 @@ router.get('/', (req, res) => {
 
 // POST /api/collections
 router.post('/', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { name, description = '', parent_folder_id = null } = req.body;
 
   if (!name || !String(name).trim()) {
@@ -62,7 +62,7 @@ router.post('/', (req, res) => {
 
 // PUT /api/collections/:id
 router.put('/:id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
   const { name, description, parent_folder_id } = req.body;
 
@@ -112,7 +112,7 @@ router.put('/:id', (req, res) => {
 
 // DELETE /api/collections/:id
 router.delete('/:id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
 
   const existing = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);
@@ -126,7 +126,7 @@ router.delete('/:id', (req, res) => {
 
 // POST /api/collections/:id/models
 router.post('/:id/models', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
   const { model_id } = req.body;
 
@@ -154,7 +154,7 @@ router.post('/:id/models', (req, res) => {
 
 // DELETE /api/collections/:id/models/:model_id
 router.delete('/:id/models/:model_id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id, model_id } = req.params;
 
   const collection = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);

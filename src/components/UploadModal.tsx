@@ -9,6 +9,13 @@ interface UploadModalProps {
   onUploadSuccess: () => void;
 }
 
+// Error object type for uploads
+type UploadErrorDetail = {
+  message: string;
+  type?: 'file' | 'network' | 'invalid';
+  details?: string;
+};
+
 export const UploadModal: React.FC<UploadModalProps> = ({
   collections,
   onClose,
@@ -20,11 +27,24 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   const [tags, setTags] = useState('');
   const [collectionId, setCollectionId] = useState('');
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<UploadErrorDetail | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFilesAdded = (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    // Reject image files immediately
+    const imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+    for (const file of files) {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      if (ext && imageExtensions.includes(ext)) {
+        setUploadError({ 
+          message: `${file.name}: Image files are not allowed`, 
+          type: 'file' as const,
+          details: 'We only accept 3D model files (.stl, .3mf, .obj) or archives (.zip, .7z)'
+        });
+        return;
+      }
+    }
     const newFiles = Array.from(files);
     setSelectedFiles((prev) => [...prev, ...newFiles]);
     if (!title && newFiles[0]) {
@@ -39,8 +59,41 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Check if any file has no extension
+    for (const file of selectedFiles) {
+      const ext = file.name.split('.').pop()?.toLowerCase() || '';
+      
+      // Reject files without extension or with disallowed extensions
+      if (!ext || !['stl', '3mf', 'obj', 'zip', '7z'].includes(ext)) {
+        setUploadError({ 
+          message: `File: ${file.name.split('.')[0] || file.name}`, 
+          type: 'file' as const,
+          details: 'Please use only .stl, .3mf, .obj (3D models) or .zip, .7z (archives)'
+        });
+        return;
+      }
+
+      // Check for image masquerading attempts
+      if (ext === 'stl' || ext === 'obj') {
+        const nameWithoutExt = file.name.split('.')[0]?.toLowerCase();
+        const suspiciousImageNames = ['screenshot', 'image', 'photo', 'picture', 'capture'];
+        if (suspiciousImageNames.some(sn => nameWithoutExt.includes(sn))) {
+          setUploadError({ 
+            message: `File: ${file.name}: Suspicious filename for .${ext} model`, 
+            type: 'file' as const,
+            details: 'Files named "image" or "capture" with .stl/.obj extensions are likely not valid 3D models'
+          });
+          return;
+        }
+      }
+    }
+
     if (selectedFiles.length === 0) {
-      setUploadError('Please select at least one 3D file or archive.');
+      setUploadError({ 
+        message: 'Please select at least one 3D file or archive', 
+        type: 'file' as const 
+      });
       return;
     }
 
@@ -66,14 +119,74 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       });
 
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || 'Upload failed');
+        let message: string;
+        try {
+          const data = await res.json();
+          message = data.error || data.message || `HTTP ${res.status}`;
+        } catch {
+          message = (await res.text()).trim() || `Upload failed: ${res.status}`;
+        }
+
+        // Categorize error type based on HTTP status and message content
+        let errorType: UploadErrorDetail['type'] = 'network';
+        
+        if (res.status === 400) {
+          const msgLower = message.toLowerCase();
+          
+          // Image file attempt
+          if (msgLower.includes('image') || msgLower.includes('.jpg') || msgLower.includes('.png')) {
+            errorType = 'file' as const;
+            message += '. Only 3D models (.stl/.3mf/.obj) and archives allowed.';
+          } else if (msgLower.includes('no extension') || msgLower.includes('extension ')) {
+            errorType = 'file' as const;
+          } else if (msgLower.includes('zip')) {
+            errorType = 'file' as const;
+            message += ' Ensure ZIP contains valid 3D models, not executables.';
+          } else if (msgLower.includes('unsupported') || msgLower.includes('not allowed')) {
+            errorType = 'file' as const;
+          }
+        }
+
+        // Extract filename from error if present
+        const nameMatch = message.match(/^"?(?:^|\s)([\w/.-]+)\s*[:.]|(?:"|\')?([\w/.-]+)/);
+        if (nameMatch && !message.includes(':')) {
+          message = `${nameMatch[1] || nameMatch[2] || 'File'}: ${message}`;
+        }
+
+        setUploadError({ 
+          message, 
+          type: errorType,
+          details: errorType === 'file' ? undefined : undefined
+        });
+        return;
       }
 
       onUploadSuccess();
       onClose();
     } catch (err: any) {
-      setUploadError(err.message || 'Failed to upload model');
+      let errorMessage = 'An unknown error occurred';
+      
+      if (err?.message) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+
+      // Check for file-related errors in message
+      let errorType: UploadErrorDetail['type'] = 'network';
+      const lowerMsg = errorMessage.toLowerCase();
+      
+      if (lowerMsg.includes('image')) {
+        errorType = 'file' as const;
+        errorMessage += ' (Only .stl/.3mf/.obj and archives allowed)';
+      } else if (lowerMsg.includes('no extension') || lowerMsg.includes('extension')) {
+        errorType = 'file' as const;
+      }
+
+      setUploadError({ 
+        message: errorMessage, 
+        type: errorType 
+      });
     } finally {
       setIsUploading(false);
     }
@@ -99,9 +212,25 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         {/* Content Form */}
         <form onSubmit={handleSubmit} className="p-6 flex flex-col gap-4">
           {uploadError && (
-            <div className="flex items-center gap-2 p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-xs text-red-300">
-              <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
-              <span>{uploadError}</span>
+            <div className="flex items-start gap-3 p-4 bg-red-950/30 border border-red-800/50 rounded-xl text-xs text-red-200">
+              <AlertCircle className="w-5 h-5 shrink-0 text-red-400 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold mb-1">{uploadError.message}</p>
+                {uploadError.details && (
+                  <p className="text-red-300/80 pl-4">{uploadError.details}</p>
+                )}
+                {/* File-specific error display */}
+                {uploadError.type === 'file' && (
+                  <div className="mt-2 p-2 bg-red-900/50 rounded border border-red-800/30">
+                    <p className="font-medium mb-1 text-red-300">Supported formats:</p>
+                    <ul className="list-disc list-inside text-red-300/70 space-y-0.5">
+                      <li>.stl, .3mf, .obj (3D model files)</li>
+                      <li>.zip, .7z archives containing valid 3D models</li>
+                      <li>Image files (.jpg, .png) are not allowed for 3D models</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -119,7 +248,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               type="file"
               ref={fileInputRef}
               multiple
-              accept=".stl,.3mf,.obj,.zip,.7z"
+              accept=".stl,.3mf,.obj,.zip,.7z,image/*"
               onChange={(e) => handleFilesAdded(e.target.files)}
               className="hidden"
             />

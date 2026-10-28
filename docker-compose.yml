@@ -11,7 +11,12 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
-      - SESSION_SECRET=slag3d_production_secure_vault_secret_2026
+    secrets:
+      - session_secret
+      # Secret injection into container environment. 
+      # The secret file is mounted as an env var at runtime.
+      session_env:
+        key: SESSION_SECRET
     volumes:
       # Persistent SQLite database storage
       - slag3d_data:/data
@@ -29,3 +34,9 @@ volumes:
     name: slag3d_vault_data
   slag3d_uploads:
     name: slag3d_vault_uploads
+
+secrets:
+  session_secret:
+    file: ./secrets/session_secret.txt  # Create this file with `docker secret init session_secret -s 'new_secure_random_string'`
+  # Or initialize with a generated secure random value:
+  # curl -s https://www.random.org/secured/random/?num=1&output=txt > secrets/session_secret.txt

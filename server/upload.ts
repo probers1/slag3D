@@ -6,6 +6,65 @@ import { v4 as uuidv4 } from 'uuid';
 import { db } from './db.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
 
+// Allowed file extensions (3D models and safe archives)
+const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
+
+// Dangerous indicators in filenames to block
+const SUSPICIOUS_PATTERNS = [
+  'script', 'exe', 'bat', 'cmd', 'ps1',
+  'html', 'htm', 'js', 'vbs', 'sh',
+  'bash', 'bin', 'py', 'pl'
+];
+
+// 2D image extensions (for rejection)
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+
+/**
+ * Validate an uploaded file with security checks and descriptive errors
+ */
+function validateFile(file: Express.Multer.File): { valid: boolean; error?: Error } {
+  const originalName = file.originalname;
+  const ext = path.extname(originalName).toLowerCase().replace(/^\.+/, '');
+
+  // Handle files without extension
+  if (ext === '') {
+    console.error(`[UPLOAD SECURITY] Rejected file without extension: ${originalName}`);
+    return { valid: false, error: new Error(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+  }
+
+  // Reject image files
+  if (IMAGE_EXTENSIONS.includes(ext)) {
+    console.error(`[UPLOAD SECURITY] Image file rejected: ${originalName}`);
+    return { valid: false, error: new Error(`Image file (.${ext}) is not allowed for 3D models. Supported formats: .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+  }
+
+  // Check extension against allowlist
+  if (!ALLOWED_EXTENSIONS.includes('.' + ext)) {
+    console.error(`[UPLOAD SECURITY] Unsupported extension: ${ext} in ${originalName}`);
+    return { valid: false, error: new Error(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
+  }
+
+  // Additional checks for ZIP archives with suspicious names
+  if (ext === '.zip') {
+    const lowerName = originalName.toLowerCase();
+    if (SUSPICIOUS_PATTERNS.some(pattern => lowerName.includes(pattern))) {
+      console.error(`[UPLOAD SECURITY] Blocked suspicious archive: ${originalName}`);
+      return { valid: false, error: new Error(`File ${originalName}: Suspicious archive name contains security-related keywords. Only clean 3D model archives are allowed.`) };
+    }
+    
+    // Check for embedded executables in ZIP
+    if (['executable', 'script', 'bat', 'cmd'].some(pattern => lowerName.includes(pattern))) {
+      console.error(`[UPLOAD SECURITY] Rejected executable-like archive: ${originalName}`);
+      return { valid: false, error: new Error(`File ${originalName}: Archives containing executables or scripts are not allowed.`) };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Create multer storage configuration with validation
+ */
 const uploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const tmpDir = path.resolve(process.cwd(), 'uploads', 'tmp');
@@ -14,24 +73,30 @@ const uploadStorage = multer.diskStorage({
     }
     cb(null, tmpDir);
   },
+  
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
+    // Validate before accepting
+    const validation = validateFile(file);
+    
+    if (!validation.valid) {
+      // Throw error to multer for proper HTTP response handling
+      throw new Error(validation.error?.message || `Invalid file type for upload: ${file.originalname}`);
+    }
+    
+    // Generate unique filename with extension
+    const finalExt = path.extname(file.originalname).toLowerCase();
+    cb(null, `${uuidv4()}${finalExt}`);
   },
 });
 
+/**
+ * Multer middleware for file uploads
+ */
 export const uploadMiddleware = multer({
   storage: uploadStorage,
   limits: { fileSize: 300 * 1024 * 1024 }, // 300MB
-  fileFilter: (req, file, cb) => {
-    const allowedExts = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedExts.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`Unsupported file format ${ext}. Allowed formats: .stl, .3mf, .obj, .zip, .7z`));
-    }
-  },
+  
+  // File filter is optional - we handle validation in filename callback
 });
 
 interface ExtractedFileInfo {
@@ -68,6 +133,15 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
           const baseName = path.basename(entry.name);
           // Skip hidden / macOS metadata files
           if (baseName.startsWith('.') || entry.name.includes('__MACOSX')) continue;
+
+          // Security: Check for dangerous file types in extracted contents
+          const lowerEntry = entry.name.toLowerCase();
+          const dangerousEntryPatterns = ['.exe', '.bat', '.cmd', '.ps1', '.sh', '.py', '.pl', 'executable', 'script'];
+          
+          if (dangerousEntryPatterns.some(pattern => lowerEntry.includes(pattern))) {
+            console.warn(`[UPLOAD SECURITY] Skipping dangerous archive entry: ${entry.name}`);
+            continue;
+          }
 
           const destPath = path.join(modelDir, `${uuidv4()}_${baseName}`);
           await zip.extract(entry.name, destPath);

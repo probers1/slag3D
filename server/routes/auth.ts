@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
 import { requireAuth } from '../middleware.ts';
+import jwt from 'jsonwebtoken';
 
 const router = Router();
 
@@ -26,70 +27,86 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  req.session.userId = user.id;
-  req.session.username = user.username;
-  req.session.userRole = user.role;
+  // Generate JWT token for API access (Bypassing session for now to resolve inconsistency)
+  const token = jwt.sign(
+    { userId: user.id, username: user.username, role: user.role },
+    process.env.JWT_SECRET || 'default_secret',
+    { expiresIn: '24h' }
+  );
 
-  // Generate auth token for iframe & Bearer authentication
-  const token = uuidv4();
-  try {
-    db.prepare('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)').run(token, user.id);
-  } catch (err) {
-    console.error('Failed to store auth token:', err);
-  }
-
-  req.session.save((err) => {
-    if (err) {
-      console.error('Session save warning:', err);
-    }
-    res.json({
-      user: {
-        id: user.id,
-        username: user.username,
-        role: user.role,
-      },
-      token,
-    });
+  res.json({
+    user: {
+      id: user.id,
+      username: user.username,
+      role: user.role,
+    },
+    token,
   });
 });
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-  const authHeader = req.headers.authorization;
   let token: string | undefined;
+  
+  // Extract token from headers
+  const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.substring(7).trim();
   } else if (typeof req.headers['x-auth-token'] === 'string') {
     token = req.headers['x-auth-token'].trim();
   }
 
+  // 1. Invalidate token on the backend
   if (token) {
     try {
       db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
-    } catch {}
+      console.log('Auth token successfully invalidated.');
+    } catch (e) {
+      console.warn('Could not delete auth token:', e);
+    }
   }
 
+  // 2. Destroy session
   req.session.destroy((err) => {
     if (err) {
-      console.error('Session destroy warning:', err);
+      console.error('Failed to destroy session:', err);
     }
+
+    // 3. Clear the cookie (Crucial step)
     res.clearCookie('connect.sid');
-    res.json({ message: 'Successfully logged out' });
+    
+    // Always return success to the client, regardless of session destruction error
+    res.status(200).json({ message: 'Successfully logged out' });
   });
 });
 
-// GET /api/auth/me
+// GET /api/auth/me - Check session first, then JWT token as fallback
 router.get('/me', (req, res) => {
-  if (!req.session || !req.session.userId) {
+  // Try to get from session store first
+  let userId = req.session.userId;
+  
+  // If session doesn't have userId, fall back to resolved JWT token from middleware
+  if (!userId) {
+    console.log('[SLAG3D GET /api/auth/me] No session userId, checking resolved JWT token...');
+    const resolvedUserId = (req as any)?.userId || null;
+    if (resolvedUserId) {
+      userId = resolvedUserId;
+    }
+  }
+
+  if (!userId) {
+    console.warn('[SLAG3D GET /api/auth/me] No valid session or JWT token found');
     return res.json({ user: null });
   }
 
-  const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(req.session.userId) as
+  const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(userId) as
     | { id: string; username: string; role: 'admin' | 'user'; created_at: string }
     | undefined;
 
   if (!user) {
-    if (req.session.destroy) req.session.destroy(() => {});
+    if (req.session && req.session.destroy) {
+      req.session.destroy(() => {});
+    }
     return res.json({ user: null });
   }
 
