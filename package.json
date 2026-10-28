@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "GOOSE_SEED_DB=true tsx server.ts",
+    "dev": "tsx server.ts",
     "build": "vite build",
     "start": "tsx server.ts",
     "preview": "vite preview",

@@ -112,13 +112,59 @@ npm start
 
 ---
 
-## 🔐 Default Credentials
+## 🔐 Default Credentials (Dev Mode Only!)
 
-| Username | Password | Role |
-|---|---|---|
-| `admin` | `admin123` | Administrator |
+**⚠️ IMPORTANT:** 
+
+- **DEVELOPMENT (`GOOSE_SEED_DB=true`)**: Auto-creates admin account (`admin` / `admin123`) for testing
+- **PRODUCTION (`GOOSE_SEED_DB=false`)**: No auto-seeding - use the Admin Modal to create your own accounts
+
+| Username | Password | Role | Mode |
+|---|---|---|---|
+| `admin` | `admin123` | Administrator | Dev only ⚠️ |
 
 *(Administrators can create users or change credentials from the top navigation bar).*
+
+---
+
+## 📋 Environment Variables (`.env`)
+
+Configure these in your `.env` file:
+
+```bash
+# 🔐 Security - REQUIRED for production
+JWT_SECRET=<generate-a-secure-random-string-here>
+
+# 🚀 Deployment Mode  
+GOOSE_SEED_DB=true   # Development (auto-seeds admin)
+GOOSE_SEED_DB=false  # Production (no auto-seeding)
+```
+
+### Setting `JWT_SECRET`
+
+Generate a strong secret:
+
+```bash
+openssl rand -base64 64
+```
+
+Example: `SE57URacUoyYAkymZRYje8EyIl+DVSw2YmIKUABX5rUVHtsH8mLTVcoqH945wFFz1LEmA0nEv5VnVYURLBueOg==`
+
+### Starting the Server
+
+```bash
+# Development (with auto-seed)
+cp .env.example .env
+echo "GOOSE_SEED_DB=true" >> .env
+npm run dev
+
+# Production (no auto-seed)  
+cp .env.example .env
+echo "GOOSE_SEED_DB=false" >> .env
+npm run build && npm start
+```
+
+**🔒 Security Best Practice:** Always change default admin credentials before deploying to production!
 
 ---
 
