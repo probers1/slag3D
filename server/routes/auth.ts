@@ -30,7 +30,7 @@ router.post('/login', (req, res) => {
   // Generate JWT token for API access (Bypassing session for now to resolve inconsistency)
   const token = jwt.sign(
     { userId: user.id, username: user.username, role: user.role },
-    process.env.JWT_SECRET || 'default_secret',
+    process.env.JWT_SECRET,
     { expiresIn: '24h' }
   );
 

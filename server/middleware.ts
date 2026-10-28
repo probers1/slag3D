@@ -35,7 +35,7 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
   if (token) {
     try {
       // Verify JWT token
-      const decoded: any = jwt.verify(token, process.env.JWT_SECRET || 'default_secret');
+      const decoded: any = jwt.verify(token, process.env.JWT_SECRET);
       
       // Set user fields in request for use in other middleware
       (req as any).userId = decoded.userId;
