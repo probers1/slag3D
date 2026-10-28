@@ -7,6 +7,18 @@ import { requireAdmin } from '../middleware.ts';
 const router = Router();
 router.use(requireAdmin);
 
+/**
+ * Validates password strength: minimum 12 characters, at least one uppercase letter, and at least one number.
+ */
+function validatePasswordStrength(password: string): boolean {
+  if (password.length < 12) {
+    return false;
+  }
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  return hasUppercase && hasNumber;
+}
+
 // GET /api/admin/users
 router.get('/users', (req, res) => {
   const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC').all();
@@ -25,8 +37,8 @@ router.post('/users', (req, res) => {
     return res.status(400).json({ error: 'Username must be at least 3 characters long' });
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  if (!validatePasswordStrength(password)) {
+    return res.status(400).json({ error: 'Password must be at least 12 characters, include one uppercase letter and one number' });
   }
 
   const userRole = role === 'admin' ? 'admin' : 'user';
@@ -54,8 +66,8 @@ router.put('/users/:id/reset-password', (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
 
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  if (!validatePasswordStrength(newPassword)) {
+    return res.status(400).json({ error: 'New password must be at least 12 characters, include one uppercase letter and one number' });
   }
 
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);

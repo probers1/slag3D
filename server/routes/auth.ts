@@ -21,6 +21,18 @@ const TOKEN_CONFIG = {
 };
 
 /**
+ * Validates password strength: minimum 12 characters, at least one uppercase letter, and at least one number.
+ */
+function validatePasswordStrength(password: string): boolean {
+  if (password.length < 12) {
+    return false;
+  }
+  const hasUppercase = /[A-Z]/.test(password);
+  const hasNumber = /[0-9]/.test(password);
+  return hasUppercase && hasNumber;
+}
+
+/**
  * Generate access token with user payload
  */
 function generateAccessToken(payload: { userId: string; username: string; role: string }): string {
@@ -261,8 +273,8 @@ router.put('/change-password', requireAuth, (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ error: 'Current password and new password are required' });
   }
-  if (newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  if (!validatePasswordStrength(newPassword)) {
+    return res.status(400).json({ error: 'New password must be at least 12 characters, include one uppercase letter and one number' });
   }
 
   const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.userId) as
