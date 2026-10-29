@@ -113,6 +113,10 @@ router.post('/login', authLimiter, (req, res) => {
   // Generate both access and refresh tokens with automatic rotation
   const accessToken = generateAccessToken({ userId: user.id, username: user.username, role: user.role });
   const refreshToken = generateRefreshToken(user.id);
+  // Store in session for cookie‑based auth
+  req.session.userId = user.id;
+  req.session.username = user.username;
+  req.session.userRole = user.role;
   
   try {
     db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(refreshToken, user.id);
