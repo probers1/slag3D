@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
+import { ErrorBoundary } from './ErrorBoundary';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -538,7 +539,8 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   const currentActiveFile = model?.files.find((f) => f.id === selectedFileId) || model?.files[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
       <div className="bg-[#16161b] border border-[#2b2b36] rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl">
         {/* Modal Top Header */}
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-[#252530] bg-[#1a1a22]">
@@ -969,7 +971,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
             )}
           </div>
         </div>
-      </div>
+      </ErrorBoundary>
     </div>
   );
 };

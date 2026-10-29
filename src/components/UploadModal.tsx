@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, FileCode, CheckCircle, AlertCircle } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { CollectionItem } from '../types';
 import { apiFetch } from '../utils/api';
 
@@ -193,8 +194,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl">
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#262632]">
           <div className="flex items-center gap-2">
@@ -373,6 +375,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           </div>
         </form>
       </div>
+    </ErrorBoundary>
     </div>
   );
 };

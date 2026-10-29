@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Lock, X, AlertCircle, Check } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { apiFetch } from '../utils/api';
 
 interface ChangePasswordModalProps {
@@ -51,8 +52,9 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-md p-6 flex flex-col gap-4 shadow-2xl">
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-md p-6 flex flex-col gap-4 shadow-2xl">
         <div className="flex items-center justify-between pb-3 border-b border-[#262632]">
           <div className="flex items-center gap-2">
             <Lock className="w-5 h-5 text-blue-400" />
@@ -129,6 +131,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
           </form>
         )}
       </div>
+    </ErrorBoundary>
     </div>
   );
 };

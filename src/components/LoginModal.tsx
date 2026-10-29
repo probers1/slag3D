@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Lock, User as UserIcon, AlertCircle, ArrowRight } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { User } from '../types';
 import { apiFetch, setStoredToken, setStoredUser } from '../utils/api';
 
@@ -58,8 +59,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-      <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-md p-6 sm:p-8 flex flex-col shadow-2xl">
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
+        <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-md p-6 sm:p-8 flex flex-col shadow-2xl">
         <div className="flex flex-col items-center text-center mb-6">
           <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 mb-3">
             <Box className="w-6 h-6" />
@@ -133,6 +135,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
           </button>
         </div>
       </div>
+    </ErrorBoundary>
     </div>
   );
 };

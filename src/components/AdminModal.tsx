@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Shield, UserPlus, Key, Trash2, X, AlertCircle, Check } from 'lucide-react';
+import { ErrorBoundary } from './ErrorBoundary';
 import { User } from '../types';
 import { apiFetch } from '../utils/api';
 
@@ -109,8 +110,9 @@ export const AdminModal: React.FC<AdminModalProps> = ({ currentUserId, onClose }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-      <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl">
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+        <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#262632]">
           <div className="flex items-center gap-2.5">
@@ -290,6 +292,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({ currentUserId, onClose }
           </div>
         </div>
       </div>
+    </ErrorBoundary>
     </div>
   );
 };
