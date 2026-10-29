@@ -194,6 +194,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
   };
 
   return (
+
     <ErrorBoundary>
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
         <div className="bg-[#18181e] border border-[#2d2d38] rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto flex flex-col shadow-2xl">
@@ -374,8 +375,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
             </button>
           </div>
         </form>
-      </div>
-    </ErrorBoundary>
+      
+      
+      
   </div>
+  </div>
+  </ErrorBoundary>
   );
 };

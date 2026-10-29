@@ -5,7 +5,8 @@
 import Database from 'better-sqlite3';
 import { v1_initial_schema } from './001_initial_schema';
 import { v2_add_metadata_columns } from './002_add_metadata_columns';
-import { v3_add_soft_delete } from './003_add_soft_delete_flag';
+// Removed v3_add_soft_delete because it incorrectly targeted users table
+
 
 // Helper types
 type MigrationFunc = (db: Database) => { version: number; timestamp: string };
@@ -71,7 +72,7 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
   const migrations = [
     { version: 1, func: v1_initial_schema as MigrationFunc },
     { version: 2, func: typeof v2_add_metadata_columns === 'function' ? v2_add_metadata_columns : null },
-    { version: 3, func: typeof v3_add_soft_delete === 'function' ? v3_add_soft_delete : null }
+    { version: 3, func: typeof v4_add_soft_delete_column_to_users === 'function' ? v4_add_soft_delete_column_to_users : null }
   ] as const;
 
   for (const { version, func } of migrations) {
@@ -127,4 +128,6 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
 // =============================================================================
 
 // Re-export for convenience (handled by tsx runtime compilation)
-export { v1_initial_schema, v2_add_metadata_columns };
+export { v1_initial_schema, v2_add_metadata_columns, v4_add_soft_delete_column_to_users };
+export { v4_add_soft_delete_column_to_users };
+
