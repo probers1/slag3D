@@ -17,72 +17,89 @@ declare module 'express-session' {
 }
 
 /**
- * Global middleware to resolve user from JWT token header
+ * Global middleware to resolve user from JWT token header or session cookie.
+ * 
+ * ISSUE FIX: Previously, the middleware skipped authentication resolution for non-auth paths
+ * (e.g., /api/models, /api/collections) when no token header was present. This caused a "timing gap"
+ * on first page load after login where models wouldn't appear until after a second fetch.
+ * 
+ * FIX: Now also checks session cookie (req.session.userId) for non-auth paths. This ensures
+ * that on same-origin requests (normal browser), authenticated users get proper user resolution
+ * from their session cookie even without a Bearer token header.
  */
 export function authResolverMiddleware(req: Request, res: Response, next: NextFunction) {
-  // 1. Bypass auth resolution for internal/non-user requests (like health checks or general API endpoints)
-  // We only attempt to resolve the user if the request explicitly targets auth or carries a token.
-  const isAuthRelatedPath = req.path.startsWith('/api/auth');
+  // Priority 1: Check Authorization header or x-auth-token (Bearer tokens for iframe/fallback scenarios)
   const hasToken = !!req.headers.authorization || !!req.headers['x-auth-token'];
-  
-  if (!isAuthRelatedPath && !hasToken) {
-    console.log(`Skipping authentication middleware for path: ${req.path}`);
-    return next();
-  }
 
-  // 2. Check Authorization header or x-auth-token (Handles initial login/iframe loads)
-  const authHeader = req.headers.authorization;
-  let token: string | undefined;
+  if (hasToken) {
+    let token: string | undefined;
+    const authHeader = req.headers.authorization;
 
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.substring(7).trim();
-  } else if (typeof req.headers['x-auth-token'] === 'string') {
-    token = req.headers['x-auth-token'].trim();
-  }
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else if (typeof req.headers['x-auth-token'] === 'string') {
+      token = req.headers['x-auth-token'].trim();
+    }
 
-  if (token) {
-    try {
-      // Try to verify as access token first (standard JWT secret)
-      const decoded = jwt.verify(token, JWT_SECRET);
-      
-      if (decoded) {
-        // Successfully verified as access token
-        console.log('[AUTH] Access token verified successfully');
-        
-        // Set user fields in request for use in other middleware
-        (req as any).userId = decoded.userId;
-        (req as any).username = decoded.username;
-        (req as any).role = decoded.role;
-        (req as any).tokenType = 'access';
-      } else {
-        // Access token verification failed, try refresh token verification
-        try {
-          const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as { data?: string } | JwtPayload;
-          
-          if ('data' in decodedRefresh && decodedRefresh.data) {
-            const [_, userId] = decodedRefresh.data.split(':');
-            if (userId) {
-              // Valid refresh token - rotate it in the background and get user info
-              console.log('[AUTH] Refresh token detected - starting rotation');
-              setRefreshTokenRotation(userId, token);
-              (req as any).userId = userId;
-              (req as any).username = 'refresh_user';
-              (req as any).role = 'user';
-              (req as any).tokenType = 'refresh';
+    if (token) {
+      try {
+        // Try to verify as access token first (standard JWT secret)
+        const decoded = jwt.verify(token, JWT_SECRET);
+
+        if (decoded) {
+          // Successfully verified as access token
+          console.log('[AUTH] Access token verified successfully');
+
+          // Set user fields in request for use in other middleware
+          (req as any).userId = decoded.userId;
+          (req as any).username = decoded.username;
+          (req as any).role = decoded.role;
+          (req as any).tokenType = 'access';
+        } else {
+          // Access token verification failed, try refresh token verification
+          try {
+            const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as { data?: string } | JwtPayload;
+
+            if ('data' in decodedRefresh && decodedRefresh.data) {
+              const [_, userId] = decodedRefresh.data.split(':');
+              if (userId) {
+                // Valid refresh token - rotate it in the background and get user info
+                console.log('[AUTH] Refresh token detected - starting rotation');
+                setRefreshTokenRotation(userId, token);
+                (req as any).userId = userId;
+                (req as any).username = 'refresh_user';
+                (req as any).role = 'user';
+                (req as any).tokenType = 'refresh';
+              }
             }
+          } catch (_refreshErr: any) {
+            // Neither access nor refresh token worked
+            console.warn('[AUTH] Token verification failed for all token types');
           }
-        } catch (_refreshErr: any) {
-          // Neither access nor refresh token worked
-          console.warn('[AUTH] Token verification failed for all token types');
         }
+      } catch (err: any) {
+        // Neither access nor refresh token worked
+        console.warn('Error verifying JWT token:', err.message);
       }
-
-    } catch (err: any) {
-      // Neither access nor refresh token worked
-      console.warn('Error verifying JWT token:', err.message);
+    }
+  } else if (!req.path.startsWith('/api/auth')) {
+    // Priority 2: Check session cookie for non-auth-related paths.
+    // For same-origin requests (normal browser), the session cookie contains userId set at login.
+    // For iframe scenarios, cookies may be disabled, so hasToken would already be true above.
+    const sessionUserId = req.session.userId;
+    if (sessionUserId) {
+      console.log('[AUTH] Using session cookie for user resolution (userId=' + sessionUserId + ')');
+      (req as any).userId = sessionUserId;
+      // Placeholder username - actual user details are loaded via /api/auth/me endpoint
+      (req as any).username = 'session_user_' + sessionUserId.substring(0, 6);
+      (req as any).role = 'user';
+      (req as any).tokenType = 'session';
+    } else {
+      console.log(`[AUTH] No token and no session for path: ${req.path}`);
     }
   }
 
+  // Always call next() - auth resolution is complete
   next();
 }
 
@@ -91,7 +108,7 @@ function setRefreshTokenRotation(userId: string, oldToken: string): void {
   try {
     // Attempt to generate new token and store (will fail gracefully if DB issue)
     console.log(`[AUTH] User ${userId} token rotation attempted`);
-    
+
   } catch (err: any) {
     // Ignore background rotation errors
   }
