@@ -21,7 +21,7 @@ function validatePasswordStrength(password: string): boolean {
 
 // GET /api/admin/users
 router.get('/users', (req, res) => {
-  const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC').all();
+  const users = db.prepare('SELECT id, username, role, created_at, is_deleted FROM users WHERE is_deleted = 0 ORDER BY created_at ASC').all();
   res.json({ users });
 });
 
