@@ -29,7 +29,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
 
-      // Store the access token for future API requests
+      // Store the access token for future API requests (fallback auth)
       if (data.accessToken) {
         setStoredToken(data.accessToken);
       }

@@ -41,13 +41,14 @@ export function setStoredUser<T>(user: T | null) {
 export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
 
-  // Attach auth token from localStorage if available
+  // Attach auth token from localStorage if available (fallback for frames, iframe scenarios)
   const storedToken = getStoredToken();
   if (storedToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${storedToken}`);
   }
 
-  // Set credentials to include so cookies are also transmitted when supported
+  // Set credentials to include so session cookies are also transmitted when supported
+  // Backend prefers cookies for same-origin, uses token for frames
   const config: RequestInit = {
     ...options,
     headers,
@@ -56,7 +57,7 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
 
   const response = await fetch(url, config);
 
-  // If unauthorized, token might be invalid or expired
+  // If unauthorized (except /api/auth/me which returns no data on error), log warning
   if (response.status === 401 && !url.includes('/api/auth/me')) {
     console.warn(`[SLAG3D API] 401 Unauthorized for ${url}`);
   }
