@@ -3,8 +3,8 @@
  */
 
 import Database from 'better-sqlite3';
-import { v1_initial_schema } from './001_initial_schema';
-import { v2_add_metadata_columns } from './002_add_metadata_columns';
+import { v1_initial_schema } from './001_initial_schema.js';
+import { v2_add_metadata_columns } from './002_add_metadata_columns.js';
 
 // Helper types
 type MigrationFunc = (db: Database) => { version: number; timestamp: string };

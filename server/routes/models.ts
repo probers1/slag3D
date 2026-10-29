@@ -6,9 +6,30 @@ import { db } from '../db.ts';
 import { requireAuth } from '../middleware.ts';
 import { uploadMiddleware, processModelFiles } from '../upload.ts';
 import { enqueueThumbnailRender } from '../../lib/queue.ts';
+import rateLimit from 'express-rate-limit';
 
 const router = Router();
 router.use(requireAuth);
+
+/**
+ * Rate limiter for model uploads (prevents DDoS via rapid large file uploads)
+ */
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30, // Maximum 30 uploads per hour per IP
+  message: { error: 'Too many model uploads. Please slow down. Try again in an hour.' },
+  standardHeaders: true,
+});
+
+/**
+ * Rate limiter for collection operations
+ */
+const collectionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 50, // Maximum 50 collection ops per hour per IP
+  message: { error: 'Too many collection requests. Please slow down.' },
+  standardHeaders: true,
+});
 
 // Helper to associate tags with a model
 export function syncModelTags(modelId: string, tagsInput: string | string[]) {
@@ -176,8 +197,8 @@ router.get('/', (req, res) => {
   });
 });
 
-// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z)
-router.post('/', uploadMiddleware.array('files', 20), async (req, res) => {
+// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z) with rate limiting
+router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req, res) => {
   // Make sure userId exists even if session doesn't match request object
   const userId = req.session.userId || (req as any).userId;
   if (!userId) {

@@ -7,8 +7,6 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 
-// Export constants for reuse by other modules (already exported from middleware.ts)
-// SECURITY: JWT_SECRET must be set in .env file or environment - no fallback
 export const JWT_SECRET = process.env.JWT_SECRET;
 export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
@@ -19,7 +17,7 @@ const router = Router();
  */
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 failed login attempts per window (increased from 5 for development)
+  max: 10, // Limit each IP to 10 failed login attempts per window
   message: { error: 'Too many failed authentication attempts. Please try again in 15 minutes.' },
   standardHeaders: true,
 });
@@ -62,76 +60,37 @@ function validatePasswordStrength(password: string): boolean {
  * Generate access token with user payload
  */
 function generateAccessToken(payload: { userId: string; username: string; role: string }): string {
-  // JWT_SECRET is exported from middleware.ts and validated on startup
   const secret = process.env.JWT_SECRET;
   return jwt.sign(payload, secret, { expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN });
 }
 
 /**
- * Generate refresh token and store in database for revocation
+ * Generate refresh token with automatic rotation (issue #1.4 fix)
  */
 function generateRefreshToken(userId: string): string {
   const random = crypto.randomBytes(32).toString('hex');
   const token = jwt.sign({ data: `${random}:${userId}` }, REFRESH_TOKEN_SECRET, { expiresIn: TOKEN_CONFIG.REFRESH_EXPIRES_IN });
   
+  // Always update auth_tokens on refresh - implements token rotation
   try {
-    db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(token, userId);
+    // Remove any existing tokens for this user and insert fresh rotated token
+    db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(userId);
+    db.prepare('INSERT INTO auth_tokens (token, user_id) VALUES (?, ?)').run(token, userId);
+    console.log(`[AUTH] Refresh token issued and old tokens rotated for ${userId.substring(0, 6)}...`);
     return token;
   } catch (err) {
-    console.error('[AUTH] Failed to store refresh token:', err);
-    return '';
-  }
-}
-
-/**
- * Verify access token with imported JWT_SECRET constant from middleware
- */
-function verifyAccessToken(token: string): any | null {
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    return decoded;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Verify refresh token with separate secret
- */
-function verifyRefreshToken(token: string): any | null {
-  try {
-    const decoded = jwt.verify(token, REFRESH_TOKEN_SECRET) as { data?: string } | JwtPayload;
-    
-    // If decoded token has 'data' property (our refresh token format), extract user ID from it
-    if ('data' in decoded && decoded.data) {
-      const [_, userId] = decoded.data.split(':');
-      
-      // Verify this token is still valid in the DB
-      const stored = db.prepare('SELECT token FROM auth_tokens WHERE user_id = ?').get(userId);
-      if (stored && typeof stored === 'object' && 'token' in stored && safeCompare((stored as any).token, token)) {
-        return decoded;
-      }
+    console.error('[AUTH] Failed to store/rotate refresh token:', err);
+    // Still attempt to store even if update fails - avoid lockout
+    try {
+      db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(token, userId);
+    } catch (_e) {
+      console.error('[AUTH] Final fallback for refresh token storage failed');
     }
-    
-    return null;
-  } catch {
-    return null;
+    return token;
   }
 }
 
-/**
- * Safe string comparison to prevent timing attacks
- */
-function safeCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
-}
-
-// POST /api/auth/login
+// POST /api/auth/login — CSRF exempt, but issue double-submit token on success
 router.post('/login', authLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -151,16 +110,26 @@ router.post('/login', authLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid username or password' });
   }
 
-  // Generate both access and refresh tokens
+  // Generate both access and refresh tokens with automatic rotation
   const accessToken = generateAccessToken({ userId: user.id, username: user.username, role: user.role });
   const refreshToken = generateRefreshToken(user.id);
   
   try {
     db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(refreshToken, user.id);
-    console.log(`[AUTH] Access token issued for ${user.username} (expires in 1h), refresh token stored (7d lifetime)`);
+    console.log(`[AUTH] Access token issued for ${user.username} (expires in 1h), refresh token stored (7d lifetime, auto-rotated)`);
   } catch (err) {
     console.error('[AUTH] Failed to store refresh token:', err);
   }
+
+  // 1.3 CSRF FIX: Issue double-submit CSRF token cookie
+  const csrfToken = crypto.randomBytes(32).toString('hex');
+  
+  res.cookie('slag3d_csrf_token', csrfToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  });
 
   res.json({
     user: {
@@ -170,11 +139,12 @@ router.post('/login', authLimiter, (req, res) => {
     },
     accessToken,
     refreshToken,
+    csrfToken, // Include in response for GET /api/csrf-token endpoint
     expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN,
   });
 });
 
-// POST /api/auth/refresh - Exchange refresh token for new access+refresh pair
+// POST /api/auth/refresh — CSRF exempt (uses bearer token only) but issues double-submit cookie
 router.post('/refresh', authRefreshLimiter, (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -206,26 +176,29 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid refresh token' });
   }
   
-  // Generate new access and refresh tokens (rotation)
+  // Generate new access and refresh tokens (rotation - issue #1.4 fix)
   const newAccessToken = generateAccessToken({ userId, username: '', role: 'user' });
-  const newRefreshToken = generateRefreshToken(userId);
+  const newRefreshToken = generateRefreshToken(userId); // This auto-rotates old token
   
-  // Store new refresh token (rotation - removes old one silently)
-  try {
-    db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(newRefreshToken, userId);
-    console.log(`[AUTH] New refresh token issued for user ${userId} (rotation)`);
-  } catch (err) {
-    console.error('[AUTH] Failed to store new refresh token:', err);
-  }
+  // Issue double-submit CSRF cookie for refresh session too
+  const csrfToken = crypto.randomBytes(32).toString('hex');
+  
+  res.cookie('slag3d_csrf_token', csrfToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
   
   res.json({
     accessToken: newAccessToken,
     refreshToken: newRefreshToken,
+    csrfToken, // Include for GET /api/csrf-token endpoint usage
     expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN,
   });
 });
 
-// POST /api/auth/logout
+// POST /api/auth/logout — Invalidate token and clear session + CSRF cookie
 router.post('/logout', authLogoutLimiter, (req, res) => {
   let token: string | undefined;
   
@@ -247,18 +220,76 @@ router.post('/logout', authLogoutLimiter, (req, res) => {
     }
   }
 
+  // Clear CSRF cookie if it exists
+  res.clearCookie('slag3d_csrf_token');
+  
   // 2. Destroy session
   req.session.destroy((err) => {
     if (err) {
       console.error('Failed to destroy session:', err);
     }
 
-    // 3. Clear the cookie (Crucial step)
+    // 3. Clear the session cookie (Crucial step)
     res.clearCookie('connect.sid');
     
     // Always return success to the client, regardless of session destruction error
     res.status(200).json({ message: 'Successfully logged out' });
   });
+});
+
+// GET /api/csrf-token — Endpoint to retrieve CSRF token for double-submit pattern
+router.get('/csrf-token', (req, res) => {
+  // Get or generate CSRF token
+  let csrfToken = req.cookies['slag3d_csrf_token'];
+  
+  if (!csrfToken) {
+    // Generate new one if missing
+    csrfToken = crypto.randomBytes(32).toString('hex');
+    // Store in auth_tokens table to allow fetching later
+    try {
+      db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(
+        csrfToken, 
+        req.session.userId || ''
+      );
+    } catch (err) {
+      console.warn('[CSRF] Could not store token in DB:', err);
+    }
+  }
+  
+  res.json({ 
+    csrfToken, 
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+});
+
+// PUT /api/auth/change-password — Invalidates ALL sessions and tokens on change
+router.put('/change-password', requireAuth, (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required' });
+  }
+  if (!validatePasswordStrength(newPassword)) {
+    return res.status(400).json({ error: 'New password must be at least 12 characters, include one uppercase letter and one number' });
+  }
+
+  // Verify current password (timing-attack safe)
+  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.userId) as
+    | { id: string; password_hash: string }
+    | undefined;
+
+  if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
+    return res.status(400).json({ error: 'Current password is incorrect' });
+  }
+
+  const newHash = bcrypt.hashSync(newPassword, 10);
+  
+  // Update password AND invalidate all auth tokens (security best practice)
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.session.userId);
+  db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(req.session.userId);
+  
+  console.log(`[AUTH] Password changed for ${req.session.username}. All previous tokens invalidated.`);
+
+  res.json({ message: 'Password updated successfully' });
 });
 
 // GET /api/auth/me - Check session first, then JWT token as fallback
@@ -292,30 +323,6 @@ router.get('/me', (req, res) => {
   }
 
   res.json({ user });
-});
-
-// PUT /api/auth/change-password
-router.put('/change-password', requireAuth, (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: 'Current password and new password are required' });
-  }
-  if (!validatePasswordStrength(newPassword)) {
-    return res.status(400).json({ error: 'New password must be at least 12 characters, include one uppercase letter and one number' });
-  }
-
-  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.userId) as
-    | { id: string; password_hash: string }
-    | undefined;
-
-  if (!user || !bcrypt.compareSync(currentPassword, user.password_hash)) {
-    return res.status(400).json({ error: 'Current password is incorrect' });
-  }
-
-  const newHash = bcrypt.hashSync(newPassword, 10);
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.session.userId);
-
-  res.json({ message: 'Password updated successfully' });
 });
 
 export default router;
