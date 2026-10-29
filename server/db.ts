@@ -75,7 +75,7 @@ export async function initDatabase(): Promise<void> {
 
   try {
     // Import and run migrations via single unified entrypoint
-    const migrationsModule = await import('./migrations/index.js');
+    const migrationsModule = await import('./migrations/index');
     if (migrationsModule?.runMigrations) {
       console.log('[MIGRATIONS] Running migration system (v1/v2)...');
       const result = migrationsModule.runMigrations(db);
@@ -116,17 +116,7 @@ export async function initDatabase(): Promise<void> {
       console.warn('[MIGRATIONS] v2 upgrade skipped:', err?.message);
     }
   }
-    // Upgrade path: just apply v2
-    try {
-      const m2 = await import('./migrations/002_add_metadata_columns.js');
-      if (m2?.v2_add_metadata_columns) {
-        m2.v2_add_metadata_columns(db);
-        console.log('[MIGRATIONS] Applied v2\n');
-      }
-    } catch (err) {
-      // Ignore upgrade errors to prevent breaking first-time setup
-    }
-  }
+
 }
 
 /**
