@@ -5,6 +5,7 @@
 import Database from 'better-sqlite3';
 import { v1_initial_schema } from './001_initial_schema';
 import { v2_add_metadata_columns } from './002_add_metadata_columns';
+import { v3_add_soft_delete } from './003_add_soft_delete_flag';
 
 // Helper types
 type MigrationFunc = (db: Database) => { version: number; timestamp: string };
@@ -66,10 +67,11 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
     ensureMigrationTable(db);
   }
 
-  // Define migrations to apply
+  // Define migrations to apply (v1, v2, v3+)
   const migrations = [
     { version: 1, func: v1_initial_schema as MigrationFunc },
-    { version: 2, func: typeof v2_add_metadata_columns === 'function' ? v2_add_metadata_columns : null }
+    { version: 2, func: typeof v2_add_metadata_columns === 'function' ? v2_add_metadata_columns : null },
+    { version: 3, func: typeof v3_add_soft_delete === 'function' ? v3_add_soft_delete : null }
   ] as const;
 
   for (const { version, func } of migrations) {
