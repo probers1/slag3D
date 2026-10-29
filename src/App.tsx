@@ -46,8 +46,9 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
-          setCurrentUser(data.user);
-          setStoredUser(data.user);
+          const userWithId = { ...data.user, id: String(data.user?.id || '') };
+          setCurrentUser(userWithId);
+          setStoredUser(userWithId);
           setAuthChecked(true);
           return;
         }
