@@ -74,37 +74,48 @@ export async function initDatabase(): Promise<void> {
   `);
 
   try {
-    // Import and run migrations
+    // Import and run migrations via single unified entrypoint
     const migrationsModule = await import('./migrations/index.js');
     if (migrationsModule?.runMigrations) {
-      console.log('[MIGRATIONS] Running migration system...');
+      console.log('[MIGRATIONS] Running migration system (v1/v2)...');
       const result = migrationsModule.runMigrations(db);
       
-      if (result.errors && Object.keys(result.errors).length > 0) {
-        console.error('[MIGRATIONS] Errors:', result.errors);
-        // Rollback by deleting tables we just created if migrations fail
+      // Fail fast if any migrations encountered errors
+      if (Object.keys(result.errors).length > 0) {
+        console.error('[MIGRATIONS] Migration errors detected - aborting setup:', result.errors);
         throw new Error('Migration errors: ' + JSON.stringify(result.errors));
       }
       
       console.log('[MIGRATIONS] Completed successfully\n');
     } else {
-      console.log('[MIGRATIONS] Module not found, applying inline fallback');
+      // Migration entrypoint not found - use fallback for recovery
+      console.error('[MIGRATIONS] WARNING: migrations/index.js entry point missing, using fallback');
       applyFallbackTables();
     }
   } catch (err: any) {
-    console.error('[MIGRATIONS] Error:', err.message);
+    if (err.message?.includes('Migration errors')) {
+      // Already logged in the try block above
+      throw err; // Re-throw to fail setup
+    }
+    console.error('[MIGRATIONS] Unexpected error during migration:', err?.message);
+    
+    // Fall back to basic table creation if migrations failed unexpectedly
+    applyFallbackTables();
   }
 
   // Try v2 upgrade path if current version is < 2
   const currentVersion = getCurrentVersion();
-  if (currentVersion < 0) {
-    // First-time setup - apply all migrations inline
+  if (currentVersion >= 0 && currentVersion < 2) {
     try {
-      runMigrationsInline();
-    } catch (err) {
-      console.error('[MIGRATIONS] Error:', err);
+      const m2 = await import('./migrations/002_add_metadata_columns.js');
+      if (m2?.v2_add_metadata_columns) {
+        m2.v2_add_metadata_columns(db);
+        console.log('[MIGRATIONS] Applied v2 upgrade\n');
+      }
+    } catch (err: any) {
+      console.warn('[MIGRATIONS] v2 upgrade skipped:', err?.message);
     }
-  } else if (currentVersion === 1) {
+  }
     // Upgrade path: just apply v2
     try {
       const m2 = await import('./migrations/002_add_metadata_columns.js');
@@ -119,44 +130,7 @@ export async function initDatabase(): Promise<void> {
 }
 
 /**
- * Apply all migrations inline as fallback
- */
-function runMigrationsInline(): void {
-  // Import migration functions inline if needed
-  try {
-    const m1 = require('./migrations/001_initial_schema.ts');
-    const m2 = require('./migrations/002_add_metadata_columns.ts');
-  } catch {
-    // Fallback: create tables manually if modules fail to import
-    applyFallbackTables();
-  }
-
-  // Record migrations in schema_versions
-  try {
-    // v1 is applied inline
-    db.prepare(`INSERT INTO schema_versions (version, applied_at) VALUES (1, ?)`).run(new Date().toISOString());
-    console.log('[MIGRATIONS] v1 applied\n');
-
-    // Apply v2 upgrade
-    const currentVersion = getCurrentVersion();
-    if (currentVersion < 2) {
-      try {
-        const m2 = require('./migrations/002_add_metadata_columns.ts');
-        if (m2?.v2_add_metadata_columns) {
-          m2.v2_add_metadata_columns(db);
-          console.log('[MIGRATIONS] v2 applied\n');
-        }
-      } catch {
-        // Ignore v2 errors for graceful degraded mode
-      }
-    }
-  } catch (err: any) {
-    console.error('[MIGRATIONS] Error:', err.message);
-  }
-}
-
-/**
- * Apply base tables if migrations fail - degraded mode but fully functional
+ * Apply base tables if migrations fail - only called when migration system genuinely fails
  */
 function applyFallbackTables(): void {
   // First-time initialization
