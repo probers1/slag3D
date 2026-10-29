@@ -36,8 +36,6 @@ export default function App() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
-  // Force render key for guaranteed re-renders after operations
-  const [, setRenderTrigger] = useState(0);
 
   // Check auth status on mount
   const checkAuth = async () => {
@@ -202,7 +200,7 @@ export default function App() {
         body: JSON.stringify({ name, description, parent_folder_id: parentId }),
       });
       if (res.ok) {
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       } else {
         const data = await res.json();
         alert(data.error || 'Failed to create collection');
@@ -220,7 +218,7 @@ export default function App() {
         body: JSON.stringify({ name }),
       });
       if (res.ok) {
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       } else {
         const data = await res.json();
         alert(data.error || 'Failed to rename collection');
@@ -235,7 +233,7 @@ export default function App() {
       const res = await apiFetch(`/api/collections/${id}`, { method: 'DELETE' });
       if (res.ok) {
         if (selectedCollectionId === id) setSelectedCollectionId(null);
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       }
     } catch (err) {
       console.error('Delete collection error:', err);
@@ -522,8 +520,7 @@ export default function App() {
           onClose={() => setIsUploadOpen(false)}
           onUploadSuccess={() => {
             fetchModels();
-            fetchTags();
-            fetchCollections();
+            fetchTags();            
           }}
         />
       )}
@@ -546,14 +543,15 @@ export default function App() {
         <LoginModal
           onLoginSuccess={(user) => {
             setCurrentUser(user);
-            setAuthChecked(true); // Exit loading state
+            setAuthChecked(true);
             setIsLoginOpen(false);
-            setRenderTrigger(prev => prev + 1); // Force re-render
 
-            // Fetch models after a brief timeout to ensure login completes first
+            // Fetch data after brief timeout to ensure login completes first
             setTimeout(async () => {
               await fetchModels();
-            }, 0);
+              await fetchTags();
+              await fetchCollections();
+            }, 50);
           }}
           onClose={() => setIsLoginOpen(false)}
         />
@@ -568,9 +566,9 @@ export default function App() {
           isAdmin={currentUser?.role === 'admin'}
           onClose={() => setSelectedModelId(null)}
           onModelUpdated={() => {
-            fetchModels();
-            fetchTags();
-            fetchCollections();
+            // Model was updated/uploaded - refresh specific view data only
+            fetchModels();  // Models might have changed (new uploads from same user)
+            // Tags and collections don't change when model is selected for viewing
           }}
         />
       )}
