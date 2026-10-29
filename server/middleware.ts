@@ -4,7 +4,8 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
 
 // Export constants for reuse by other modules (including auth.ts)
-export const JWT_SECRET = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
+// SECURITY: JWT_SECRET must be set in .env file or environment - no fallback
+export const JWT_SECRET = process.env.JWT_SECRET;
 export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 declare module 'express-session' {

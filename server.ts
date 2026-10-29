@@ -1,6 +1,13 @@
 // Load environment variables from .env file
 import 'dotenv/config';
 
+// Validate critical security configuration
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
+  console.error('[SLAG3D SECURITY ERROR] JWT_SECRET must be set to a value of at least 32 characters');
+  console.error('Please set JWT_SECRET in your .env file before starting the server.');
+  process.exit(1);
+}
+
 import express from 'express';
 import session from 'express-session';
 import connectSqlite3 from 'connect-sqlite3';
@@ -45,7 +52,7 @@ app.set('trust proxy', 1);
 app.use(
   session({
     store: sessionStore,
-    secret: process.env.SESSION_SECRET || 'slag3d-vault-super-secure-key-2026',
+    secret: process.env.SESSION_SECRET || defaultSessionSecret,
     resave: false,
     saveUninitialized: false,
     cookie: {

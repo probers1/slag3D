@@ -271,6 +271,13 @@ function applyFallbackTables(): void {
   console.log('[MIGRATIONS] Tables created\n');
 }
 
+// Validate session secret for session cookie signing
+// Default is handled by dotenv import - use only if explicitly set but weak
+const defaultSessionSecret = process.env.SESSION_SECRET || 'default_session_secret_placeholder';
+if (process.env.SESSION_SECRET?.length && process.env.SESSION_SECRET.length < 32) {
+  console.warn('[SLAG3D WARNING] SESSION_SECRET is set but less than 32 characters. Consider using a stronger secret.');
+}
+
 // Initialize on startup in dev/seed mode only
 if (process.env.NODE_ENV !== 'production' || process.env.GOOSE_SEED_DB) {
   initDatabase().catch(console.error);

@@ -8,8 +8,8 @@ import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 
 // Export constants for reuse by other modules (already exported from middleware.ts)
-// Keep local fallback in case middleware isn't loaded, but use correct secret value here
-export const JWT_SECRET = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
+// SECURITY: JWT_SECRET must be set in .env file or environment - no fallback
+export const JWT_SECRET = process.env.JWT_SECRET;
 export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 const router = Router();
@@ -62,7 +62,8 @@ function validatePasswordStrength(password: string): boolean {
  * Generate access token with user payload
  */
 function generateAccessToken(payload: { userId: string; username: string; role: string }): string {
-  const secret = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
+  // JWT_SECRET is exported from middleware.ts and validated on startup
+  const secret = process.env.JWT_SECRET;
   return jwt.sign(payload, secret, { expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN });
 }
 
