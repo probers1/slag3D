@@ -134,8 +134,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
             Auto-fill
           </button>
         </div>
-      </div>
-    </ErrorBoundary>
+      </ErrorBoundary>
     </div>
   );
 };

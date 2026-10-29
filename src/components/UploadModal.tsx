@@ -376,6 +376,6 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         </form>
       </div>
     </ErrorBoundary>
-    </div>
+  </div>
   );
 };

@@ -293,6 +293,6 @@ export const AdminModal: React.FC<AdminModalProps> = ({ currentUserId, onClose }
         </div>
       </div>
     </ErrorBoundary>
-    </div>
+  </div>
   );
 };

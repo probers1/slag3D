@@ -132,6 +132,6 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
         )}
       </div>
     </ErrorBoundary>
-    </div>
+  </div>
   );
 };
