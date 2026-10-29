@@ -59,7 +59,7 @@ router.get('/tags', (req, res) => {
 
 // GET /api/models — Paginated search & filter
 router.get('/', (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId || '';
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 12));
   const offset = (page - 1) * limit;

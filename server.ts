@@ -51,8 +51,9 @@ app.use(
     cookie: {
       maxAge: parseInt(process.env.SESSION_EXPIRY_MINUTES || '3360', 10) * 60 * 1000, // 7 days (defaults to 3360 minutes = 7 days), configurable via SESSION_EXPIRY_MINUTES env var
       httpOnly: true,
-      secure: 'auto',
-      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production', // Only in production for https
+      sameSite: 'lax', // Changed from strict to lax for better compatibility
+      path: '/',
     },
   })
 );

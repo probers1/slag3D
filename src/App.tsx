@@ -36,6 +36,8 @@ export default function App() {
   const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  // Force render key for guaranteed re-renders after operations
+  const [, setRenderTrigger] = useState(0);
 
   // Check auth status on mount
   const checkAuth = async () => {
@@ -534,7 +536,14 @@ export default function App() {
         <LoginModal
           onLoginSuccess={(user) => {
             setCurrentUser(user);
+            setAuthChecked(true); // Exit loading state
             setIsLoginOpen(false);
+            setRenderTrigger(prev => prev + 1); // Force re-render
+
+            // Fetch models after a brief timeout to ensure login completes first
+            setTimeout(async () => {
+              await fetchModels();
+            }, 0);
           }}
           onClose={() => setIsLoginOpen(false)}
         />

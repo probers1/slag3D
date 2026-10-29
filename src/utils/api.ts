@@ -42,9 +42,9 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
   const headers = new Headers(options.headers || {});
 
   // Attach auth token from localStorage if available
-  const token = getStoredToken();
-  if (token && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${token}`);
+  const storedToken = getStoredToken();
+  if (storedToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${storedToken}`);
   }
 
   // Set credentials to include so cookies are also transmitted when supported

@@ -29,15 +29,22 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
 
-      if (data.token) {
-        setStoredToken(data.token);
+      // Store the access token for future API requests
+      if (data.accessToken) {
+        setStoredToken(data.accessToken);
       }
+      
+      // Store user info
       if (data.user) {
         setStoredUser(data.user);
       }
 
-      onLoginSuccess(data.user);
-      if (onClose) onClose();
+      // Notify parent of login success and close modal
+      setTimeout(() => {
+        onLoginSuccess(data.user);
+        if (onClose) onClose();
+      }, 100);
+
     } catch (err: any) {
       setError(err.message);
     } finally {

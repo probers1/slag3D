@@ -4,7 +4,7 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
 
 // Export constants for reuse by other modules (including auth.ts)
-export const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
+export const JWT_SECRET = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
 export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 declare module 'express-session' {
@@ -15,7 +15,9 @@ declare module 'express-session' {
   }
 }
 
-// Global middleware to resolve user from JWT token header
+/**
+ * Global middleware to resolve user from JWT token header
+ */
 export function authResolverMiddleware(req: Request, res: Response, next: NextFunction) {
   // 1. Bypass auth resolution for internal/non-user requests (like health checks or general API endpoints)
   // We only attempt to resolve the user if the request explicitly targets auth or carries a token.
@@ -40,74 +42,43 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
   if (token) {
     try {
       // Try to verify as access token first (standard JWT secret)
-      let decoded: any;
+      const decoded = jwt.verify(token, JWT_SECRET);
       
-      // First try with access token secret
-      let verifySecret = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
-      
-      try {
-        // Try with the standard access token secret first
-        decoded = jwt.verify(token, verifySecret);
+      if (decoded) {
+        // Successfully verified as access token
+        console.log('[AUTH] Access token verified successfully');
         
-        if (decoded) {
-          // Successfully verified as access token
-          console.log('[AUTH] Access token verified successfully');
-          
-          // Set user fields in request for use in other middleware
-          (req as any).userId = decoded.userId;
-          (req as any).username = decoded.username;
-          (req as any).role = decoded.role;
-          (req as any).tokenType = 'access';
-        } else {
-          // Access token might be expired or invalid, try refresh token verification
-          try {
-            const refreshSecret = REFRESH_TOKEN_SECRET;
-            decoded = jwt.verify(token, refreshSecret) as { data?: string } | JwtPayload;
-            
-            if ('data' in decoded && decoded.data) {
-              const [_, userId] = decoded.data.split(':');
-              if (userId) {
-                // Valid refresh token - rotate it in the background and get user info
-                console.log('[AUTH] Refresh token detected - starting rotation');
-                setRefreshTokenRotation(userId, token);
-                (req as any).userId = userId;
-                (req as any).username = 'refresh_user';
-                (req as any).role = 'user';
-                (req as any).tokenType = 'refresh';
-              }
-            }
-          } catch (_refreshErr: any) {
-            // Neither access nor refresh token worked
-            console.warn('[AUTH] Token verification failed for all token types');
-          }
-        }
-      } catch (_verifyError: any) {
-        // Access token verification failed, try refresh token
+        // Set user fields in request for use in other middleware
+        (req as any).userId = decoded.userId;
+        (req as any).username = decoded.username;
+        (req as any).role = decoded.role;
+        (req as any).tokenType = 'access';
+      } else {
+        // Access token verification failed, try refresh token verification
         try {
-          const refreshSecret = REFRESH_TOKEN_SECRET;
-          decoded = jwt.verify(token, refreshSecret);
+          const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as { data?: string } | JwtPayload;
           
-          if (decoded['data']) {
-            const [_, userId] = decoded.data.split(':');
+          if ('data' in decodedRefresh && decodedRefresh.data) {
+            const [_, userId] = decodedRefresh.data.split(':');
             if (userId) {
-              // Valid refresh token - rotate it and get user info
-              console.log('[AUTH] Refresh token detected, rotating...');
+              // Valid refresh token - rotate it in the background and get user info
+              console.log('[AUTH] Refresh token detected - starting rotation');
               setRefreshTokenRotation(userId, token);
               (req as any).userId = userId;
               (req as any).username = 'refresh_user';
               (req as any).role = 'user';
               (req as any).tokenType = 'refresh';
-            } else {
-              console.warn('[AUTH] Refresh token decoded but no user ID found');
             }
           }
         } catch (_refreshErr: any) {
           // Neither access nor refresh token worked
+          console.warn('[AUTH] Token verification failed for all token types');
         }
       }
-      
-    } catch (err) {
-      console.warn('Error verifying JWT token:', err);
+
+    } catch (err: any) {
+      // Neither access nor refresh token worked
+      console.warn('Error verifying JWT token:', err.message);
     }
   }
 
@@ -118,16 +89,7 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
 function setRefreshTokenRotation(userId: string, oldToken: string): void {
   try {
     // Attempt to generate new token and store (will fail gracefully if DB issue)
-    const random = crypto.randomBytes(32).toString('hex');
-    const newRefreshSecret = crypto.randomBytes(32).toString('hex');
-    
-    // Try to get user details from DB for logging only
-    const userRecord = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId);
-    if (userRecord) {
-      console.log(`[AUTH] User ${userRecord.username} token rotation attempted`);
-    } else {
-      console.log(`[AUTH] User ID ${userId} not found in DB for logging`);
-    }
+    console.log(`[AUTH] User ${userId} token rotation attempted`);
     
   } catch (err: any) {
     // Ignore background rotation errors

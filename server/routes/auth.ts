@@ -5,12 +5,38 @@ import { db } from '../db.ts';
 import { requireAuth } from '../middleware.ts';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
+import rateLimit from 'express-rate-limit';
 
-// Export constants for reuse by other modules
-export const JWT_SECRET = process.env.JWT_SECRET || 'default-secret';
+// Export constants for reuse by other modules (already exported from middleware.ts)
+// Keep local fallback in case middleware isn't loaded, but use correct secret value here
+export const JWT_SECRET = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
 export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 const router = Router();
+
+/**
+ * Rate limiter configuration for authentication endpoints
+ */
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 failed login attempts per window (increased from 5 for development)
+  message: { error: 'Too many failed authentication attempts. Please try again in 15 minutes.' },
+  standardHeaders: true,
+});
+
+const authRefreshLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // Limit each IP to 10 refresh attempts per hour
+  message: { error: 'Too many token refresh requests. Please slow down.' },
+  standardHeaders: true,
+});
+
+const authLogoutLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20, // Allow more logout attempts
+  message: { error: 'Too many logout requests. Please slow down.' },
+  standardHeaders: true,
+});
 
 /**
  * Token lifetime configuration (in seconds)
@@ -36,7 +62,7 @@ function validatePasswordStrength(password: string): boolean {
  * Generate access token with user payload
  */
 function generateAccessToken(payload: { userId: string; username: string; role: string }): string {
-  const secret = process.env.JWT_SECRET || 'default-secret';
+  const secret = process.env.JWT_SECRET || 'super-secure-secret-key-change-in-production';
   return jwt.sign(payload, secret, { expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN });
 }
 
@@ -57,11 +83,11 @@ function generateRefreshToken(userId: string): string {
 }
 
 /**
- * Verify access token with standard secret
+ * Verify access token with imported JWT_SECRET constant from middleware
  */
 function verifyAccessToken(token: string): any | null {
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'default-secret');
+    const decoded = jwt.verify(token, JWT_SECRET);
     return decoded;
   } catch {
     return null;
@@ -105,7 +131,7 @@ function safeCompare(a: string, b: string): boolean {
 }
 
 // POST /api/auth/login
-router.post('/login', (req, res) => {
+router.post('/login', authLimiter, (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
     return res.status(400).json({ error: 'Username and password are required' });
@@ -148,7 +174,7 @@ router.post('/login', (req, res) => {
 });
 
 // POST /api/auth/refresh - Exchange refresh token for new access+refresh pair
-router.post('/refresh', (req, res) => {
+router.post('/refresh', authRefreshLimiter, (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'Missing or invalid Authorization header' });
@@ -199,7 +225,7 @@ router.post('/refresh', (req, res) => {
 });
 
 // POST /api/auth/logout
-router.post('/logout', (req, res) => {
+router.post('/logout', authLogoutLimiter, (req, res) => {
   let token: string | undefined;
   
   // Extract token from headers
