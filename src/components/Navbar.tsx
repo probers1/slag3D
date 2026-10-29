@@ -4,8 +4,8 @@ import { User } from '../types';
 
 interface NavbarProps {
   user: User | null;
-  activeTab: 'all' | 'mine' | 'favorites' | 'collections';
-  onTabChange: (tab: 'all' | 'mine' | 'favorites' | 'collections') => void;
+  activeTab: 'all' | 'mine' | 'favorites';
+  onTabChange: (tab: 'all' | 'mine' | 'favorites') => void;
   onOpenUpload: () => void;
   onOpenAdmin: () => void;
   onOpenPasswordModal: () => void;
@@ -78,17 +78,6 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Heart className="w-3.5 h-3.5 fill-current" />
             Favorites
-          </button>
-          <button
-            onClick={() => onTabChange('collections')}
-            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition-all whitespace-nowrap shrink-0 ${
-              activeTab === 'collections'
-                ? 'bg-blue-600 text-white shadow-sm font-semibold'
-                : 'text-neutral-400 hover:text-white hover:bg-white/5'
-            }`}
-          >
-            <Folder className="w-3.5 h-3.5" />
-            Collections
           </button>
         </nav>
 

@@ -140,8 +140,8 @@ export default function App() {
     }
   }, [currentUser, fetchCollections, fetchTags, fetchModels]);
 
-  // Tab change handler
-  const handleTabChange = (tab: 'all' | 'mine' | 'favorites' | 'collections') => {
+  // Tab change handler (all, mine, favorites)
+  const handleTabChange = (tab: 'all' | 'mine' | 'favorites') => {
     setActiveTab(tab);
     setCurrentPage(1);
     if (tab !== 'collections') {
