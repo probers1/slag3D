@@ -73,6 +73,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setCollections(data.collections || []);
+      } else if (res.status === 401) {
+        // Session expired - re-check auth
+        console.warn('[SLAG3D] Collections fetch returned 401');
+        checkAuth();
       }
     } catch (err) {
       console.error('Error fetching collections:', err);
@@ -86,6 +90,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setTags(data.tags || []);
+      } else if (res.status === 401) {
+        // Session expired - re-check auth  
+        console.warn('[SLAG3D] Tags fetch returned 401');
+        checkAuth();
       }
     } catch (err) {
       console.error('Error fetching tags:', err);
@@ -113,7 +121,8 @@ export default function App() {
         setModels(data.models || []);
         setPagination(data.pagination || { total: 0, page: 1, limit: itemsPerPage, totalPages: 1 });
       } else if (res.status === 401) {
-        // Re-check auth if session dropped
+        // Session expired or token invalid - re-check auth and show login prompt if needed
+        console.warn('[SLAG3D] Model fetch returned 401 - session may have expired');
         checkAuth();
       }
     } catch (err) {
