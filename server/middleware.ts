@@ -3,6 +3,29 @@ import { db } from './db.ts';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
 
+// ============================================
+// FIX #16: Augment Express Request Types
+// ============================================
+// Extend Request interface to include auth fields set by middleware
+declare global {
+  namespace Express {
+    interface Request {
+      userId?: string;              // From session.cookie or JWT token (set by authResolverMiddleware)
+      username?: string;            // From JWT payload or session
+      role?: 'admin' | 'user';      // User role from JWT or session cookie
+      tokenType?: 'session' | 'access' | 'refresh' | undefined;  // Token type if JWT used (not for sessions)
+    }
+  }
+}
+
+declare module 'express-session' {
+  interface SessionData {
+    userId?: string;
+    username?: string;
+    userRole?: 'admin' | 'user';
+  }
+}
+
 // Export constants for reuse by other modules (including auth.ts)
 // SECURITY: JWT_SECRET must be set in .env file or environment - no fallback
 export const JWT_SECRET = process.env.JWT_SECRET;
@@ -51,10 +74,10 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
           console.log('[AUTH] Access token verified successfully');
 
           // Set user fields in request for use in other middleware
-          (req as any).userId = decoded.userId;
-          (req as any).username = decoded.username;
-          (req as any).role = decoded.role;
-          (req as any).tokenType = 'access';
+          req.userId = decoded.userId;
+          req.username = decoded.username;
+          req.role = decoded.role;
+          req.tokenType = 'access';
         } else {
           // Access token verification failed, try refresh token verification
           try {
@@ -66,10 +89,10 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
                 // Valid refresh token - rotate it in the background and get user info
                 console.log('[AUTH] Refresh token detected - starting rotation');
                 setRefreshTokenRotation(userId, token);
-                (req as any).userId = userId;
-                (req as any).username = 'refresh_user';
-                (req as any).role = 'user';
-                (req as any).tokenType = 'refresh';
+                req.userId = userId;
+                req.username = 'refresh_user';
+                req.role = 'user';
+                req.tokenType = 'refresh';
               }
             }
           } catch (_refreshErr: any) {
@@ -89,7 +112,7 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
     const sessionUserId = req.session.userId;
     if (sessionUserId) {
       console.log('[AUTH] Using session cookie for user resolution (userId=' + sessionUserId + ')');
-      (req as any).userId = sessionUserId;
+      req.userId = sessionUserId;
       // Placeholder username - actual user details are loaded via /api/auth/me endpoint
       (req as any).username = 'session_user_' + sessionUserId.substring(0, 6);
       (req as any).role = 'user';
