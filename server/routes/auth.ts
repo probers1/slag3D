@@ -155,6 +155,7 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
   const refreshToken = authHeader.substring(7).trim();
   
   let userId: string | null;
+  let user: { username: string; role: 'admin' | 'user' } | undefined;
   try {
     // Verify the refresh token and get user ID from it
     const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET) as { data: string };
@@ -166,10 +167,16 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
     }
     
     // Check if this user still has a valid refresh token in DB (rotation check)
-    const storedRefresh = db.prepare('SELECT token FROM auth_tokens WHERE user_id = ?').get(userId);
-    if (!storedRefresh) {
-      console.log(`[AUTH] No refresh token found for user ${userId}`);
+    const storedRefresh = db.prepare('SELECT token FROM auth_tokens WHERE user_id = ?').get(userId) as { token: string } | undefined;
+    if (!storedRefresh || storedRefresh.token !== refreshToken) {
+      console.log(`[AUTH] Refresh token mismatch or missing for user ${userId}`);
       return res.status(401).json({ error: 'Refresh token not found or expired' });
+    }
+    
+    // Load real user data for token generation
+    user = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as { username: string; role: 'admin' | 'user' } | undefined;
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
     }
     
   } catch (err: any) {
@@ -178,7 +185,7 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
   }
   
   // Generate new access and refresh tokens (rotation - issue #1.4 fix)
-  const newAccessToken = generateAccessToken({ userId, username: '', role: 'user' });
+  const newAccessToken = generateAccessToken({ userId, username: user.username, role: user.role });
   const newRefreshToken = generateRefreshToken(userId); // This auto-rotates old token
   
   // Issue double-submit CSRF cookie for refresh session too
@@ -246,15 +253,13 @@ router.get('/csrf-token', (req, res) => {
   if (!csrfToken) {
     // Generate new one if missing
     csrfToken = crypto.randomBytes(32).toString('hex');
-    // Store in auth_tokens table to allow fetching later
-    try {
-      db.prepare('INSERT OR REPLACE INTO auth_tokens (token, user_id) VALUES (?, ?)').run(
-        csrfToken, 
-        req.session.userId || ''
-      );
-    } catch (err) {
-      console.warn('[CSRF] Could not store token in DB:', err);
-    }
+    // Set cookie for the client
+    res.cookie('slag3d_csrf_token', csrfToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
   }
   
   res.json({ 

@@ -53,6 +53,7 @@ declare module 'express-session' {
 export function authResolverMiddleware(req: Request, res: Response, next: NextFunction) {
   // Priority 1: Check Authorization header or x-auth-token (Bearer tokens for iframe/fallback scenarios)
   const hasToken = !!req.headers.authorization || !!req.headers['x-auth-token'];
+  let tokenResolved = false;
 
   if (hasToken) {
     let token: string | undefined;
@@ -78,6 +79,7 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
           req.username = decoded.username;
           req.role = decoded.role;
           req.tokenType = 'access';
+          tokenResolved = true;
         } else {
           // Access token verification failed, try refresh token verification
           try {
@@ -93,6 +95,7 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
                 req.username = 'refresh_user';
                 req.role = 'user';
                 req.tokenType = 'refresh';
+                tokenResolved = true;
               }
             }
           } catch (_refreshErr: any) {
@@ -101,14 +104,15 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
           }
         }
       } catch (err: any) {
-        // Neither access nor refresh token worked
+        // Token verification failed - will fallback to session below
         console.warn('Error verifying JWT token:', err.message);
       }
     }
-  } else if (!req.path.startsWith('/api/auth')) {
-    // Priority 2: Check session cookie for non-auth-related paths.
+  }
+
+  // Priority 2: Fallback to session cookie if token not resolved
+  if (!tokenResolved && !req.path.startsWith('/api/auth')) {
     // For same-origin requests (normal browser), the session cookie contains userId set at login.
-    // For iframe scenarios, cookies may be disabled, so hasToken would already be true above.
     const sessionUserId = req.session.userId;
     if (sessionUserId) {
       console.log('[AUTH] Using session cookie for user resolution (userId=' + sessionUserId + ')');

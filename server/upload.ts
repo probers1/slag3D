@@ -79,8 +79,8 @@ const uploadStorage = multer.diskStorage({
     const validation = validateFile(file);
     
     if (!validation.valid) {
-      // Throw error to multer for proper HTTP response handling
-      throw new Error(validation.error?.message || `Invalid file type for upload: ${file.originalname}`);
+      // Return error via callback for proper HTTP response handling
+      return cb(new Error(validation.error?.message || `Invalid file type for upload: ${file.originalname}`), null as any);
     }
     
     // Generate unique filename with extension

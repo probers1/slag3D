@@ -8,7 +8,7 @@ import connectSqlite3 from 'connect-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { initDatabase, db } from './server/db.ts';
+import { initDatabase, db, dbPath } from './server/db.ts';
 
 // Import Middleware & Routers
 import { authResolverMiddleware } from './server/middleware.ts';
@@ -25,7 +25,7 @@ import modelsRouter from './server/routes/models.ts';
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Limit each IP to 5 login attempts per windowMs
-  message: 'Too many login attempts from this IP, please try again after 15 minutes.',
+  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -34,7 +34,7 @@ const authLimiter = rateLimit({
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 200, // Limit to 200 requests per minute per IP
-  message: 'Too many requests to this API endpoint from a single IP, please wait a minute.',
+  message: { error: 'Too many requests to this API endpoint from a single IP, please wait a minute.' },
   standardHeaders: true,
   legacyHeaders: false,
 });
@@ -56,11 +56,10 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
   process.exit(1);
 }
 
-if (
-  process.env.SESSION_SECRET.includes('SECRET') || 
-  process.env.SESSION_SECRET.includes('random') || 
-  process.env.SESSION_SECRET.includes('<')
-) {
+const isPlaceholder = (s: string) =>
+  s.includes('<') || s.includes('>') || /example|placeholder/i.test(s) || s === 'slag3d-vault-super-secure-key-2026';
+
+if (isPlaceholder(process.env.SESSION_SECRET)) {
   console.error('[SLAG3D SECURITY ERROR] SESSION_SECRET contains placeholder text.');
   process.exit(1);
 }
@@ -75,11 +74,7 @@ if (!jwtSecret || jwtSecret.length < 32) {
   process.exit(1);
 }
 
-if (
-  jwtSecret.includes('EXAMPLE') || 
-  jwtSecret.includes('<generate') || 
-  jwtSecret.includes('default')
-) {
+if (isPlaceholder(jwtSecret)) {
   console.error('[SLAG3D CRITICAL ERROR] JWT_SECRET contains example/placeholder text.');
   process.exit(1);
 }
@@ -94,11 +89,7 @@ if (!refreshTokenSecret || refreshTokenSecret.length < 32) {
   process.exit(1);
 }
 
-if (
-  refreshTokenSecret.includes('EXAMPLE') || 
-  refreshTokenSecret.includes('<generate') || 
-  refreshTokenSecret.includes('default')
-) {
+if (isPlaceholder(refreshTokenSecret)) {
   console.error('[SLAG3D CRITICAL ERROR] REFRESH_TOKEN_SECRET contains example/placeholder text.');
   process.exit(1);
 }
@@ -127,7 +118,10 @@ app.use('/uploads', express.static(uploadDir));
 
 // Configure SQLite Session Store
 const SQLiteStore = connectSqlite3(session);
-const sessionDir = fs.existsSync('/data') ? '/data' : path.resolve(__dirname, 'data');
+const sessionDir = path.dirname(dbPath);
+if (!fs.existsSync(sessionDir)) {
+  fs.mkdirSync(sessionDir, { recursive: true });
+}
 const sessionStore = new SQLiteStore({
   db: 'sessions.db',
   dir: sessionDir,
@@ -157,7 +151,7 @@ app.use(authResolverMiddleware);
 // API ROUTES & RATE LIMITING
 // =============================================================================
 
-app.use('/api/auth', authLimiter, authRouter); 
+app.use('/api/auth', authRouter); 
 app.use('/api/admin', apiLimiter, adminRouter);
 app.use('/api/collections', apiLimiter, collectionsRouter);
 app.use('/api/models', apiLimiter, modelsRouter);
