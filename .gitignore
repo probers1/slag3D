@@ -6,6 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+# Local Docker secrets — never commit real secret values
+secrets/session_secret.txt
 /data/*.db
 /data/*.db-journal
 /data/*.db-shm

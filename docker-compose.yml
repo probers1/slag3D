@@ -40,6 +40,6 @@ volumes:
 
 secrets:
   session_secret:
-    file: ./secrets/session_secret.txt  # Create this file with `docker secret init session_secret -s 'new_secure_random_string'`
+    file: ./secrets/session_secret.txt  # Generate this file with ./scripts/init-secret.sh (kept out of git on purpose; see session_secret.txt.example)
   # Or initialize with a generated secure random value:
   # curl -s https://www.random.org/secured/random/?num=1&output=txt > secrets/session_secret.txt
