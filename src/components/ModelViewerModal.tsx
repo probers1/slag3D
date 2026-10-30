@@ -1,4 +1,11 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+// src/components/ModelViewerModal.tsx
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from 'react';
 import * as THREE from 'three';
 import { ErrorBoundary } from './ErrorBoundary';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -19,6 +26,7 @@ import {
   Trash2,
   Eye,
   Star,
+  Upload,
 } from 'lucide-react';
 import { ModelFile, CollectionItem } from '../types';
 import { apiFetch } from '../utils/api';
@@ -57,6 +65,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   onModelUpdated,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Model data state
   const [model, setModel] = useState<ModelDetail | null>(null);
@@ -75,17 +84,21 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     heightMm: number;
     volumeCm3: number;
     weightGrams: number;
-    costUsd: number;
   }>({
     widthMm: 0,
     depthMm: 0,
     heightMm: 0,
     volumeCm3: 0,
     weightGrams: 0,
-    costUsd: 0,
   });
 
   const [filamentPriceKg, setFilamentPriceKg] = useState<number>(20.0); // $20/kg default
+
+  // Derive filament cost dynamically to avoid state loop re-renders
+  const estimatedCostUsd = useMemo(() => {
+    if (meshStats.weightGrams <= 0) return 0;
+    return Number(((meshStats.weightGrams / 1000) * filamentPriceKg).toFixed(2));
+  }, [meshStats.weightGrams, filamentPriceKg]);
 
   // Editing states
   const [isEditing, setIsEditing] = useState(false);
@@ -113,7 +126,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       setEditDesc(data.model.description || '');
       setEditTags(data.model.tags ? data.model.tags.join(', ') : '');
 
-      // Select primary file or first file if not yet selected
       if (data.model.files && data.model.files.length > 0) {
         setSelectedFileId((prev) => {
           if (prev && data.model.files.some((f: ModelFile) => f.id === prev)) {
@@ -134,14 +146,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     fetchModel();
   }, [modelId]);
 
-  // Recalculate cost when filament price or weight changes
-  useEffect(() => {
-    if (meshStats.weightGrams > 0) {
-      const cost = (meshStats.weightGrams / 1000) * filamentPriceKg;
-      setMeshStats((prev) => ({ ...prev, costUsd: Number(cost.toFixed(2)) }));
-    }
-  }, [filamentPriceKg, meshStats.weightGrams]);
-
   // Initialize Three.js scene once on mount
   useEffect(() => {
     if (!mountRef.current) return;
@@ -149,7 +153,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     const width = mountRef.current.clientWidth || 600;
     const height = mountRef.current.clientHeight || 450;
 
-    // 1. Scene & Renderer setup
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x121214);
     sceneRef.current = scene;
@@ -163,17 +166,14 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     mountRef.current.innerHTML = '';
     mountRef.current.appendChild(renderer.domElement);
 
-    // 2. Camera setup (fov: 45)
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     cameraRef.current = camera;
 
-    // 3. OrbitControls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controlsRef.current = controls;
 
-    // 4. Lighting Rig
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     scene.add(ambientLight);
 
@@ -185,12 +185,10 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     fillLight.position.set(-1, -0.5, -1).normalize();
     scene.add(fillLight);
 
-    // Grid Floor
     const grid = new THREE.GridHelper(200, 20, 0x333344, 0x1c1c24);
     grid.position.y = -0.01;
     scene.add(grid);
 
-    // Animation Loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
@@ -261,7 +259,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       scene.remove(activeMeshRef.current);
       activeMeshRef.current.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
-          (child as THREE.Mesh).geometry?.dispose();
+          const mesh = child as THREE.Mesh;
+          mesh.geometry?.dispose();
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose());
+          } else {
+            mesh.material?.dispose();
+          }
         }
       });
       activeMeshRef.current = null;
@@ -310,7 +314,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       const volumeCm3 = volumeMm3 / 1000.0;
       // Standard PLA density = 1.24 g/cm3; assuming effective infill/walls (~45% of solid volume)
       const weightGrams = volumeCm3 * 1.24 * 0.45;
-      const costUsd = (weightGrams / 1000) * filamentPriceKg;
 
       setMeshStats({
         widthMm: Number(size.x.toFixed(1)),
@@ -318,7 +321,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         heightMm: Number(size.y.toFixed(1)),
         volumeCm3: Number(volumeCm3.toFixed(2)),
         weightGrams: Number(weightGrams.toFixed(1)),
-        costUsd: Number(costUsd.toFixed(2)),
       });
 
       setLoadingMesh(false);
@@ -360,12 +362,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         }
       );
     } else {
-      // 3MF or placeholder geometry
       const geom = new THREE.DodecahedronGeometry(25, 0);
       const mesh = new THREE.Mesh(geom, material);
       attachAndPosition(mesh, geom);
     }
-  }, [filamentPriceKg, wireframe]);
+  }, [wireframe]);
 
   // When model or selectedFileId changes, load that file into the Three.js scene
   useEffect(() => {
@@ -376,7 +377,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
   }, [model, selectedFileId, loadActiveMesh]);
 
-  // Toggle wireframe mode
+  // Toggle wireframe mode dynamically
   const toggleWireframe = () => {
     setWireframe((prev) => {
       const next = !prev;
@@ -415,7 +416,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     setSaveToast(null);
 
     try {
-      // Render clean frame right before capturing canvas
       rendererRef.current.render(sceneRef.current, cameraRef.current);
       const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
 
@@ -519,6 +519,33 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
   };
 
+  // Upload supplementary files
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const form = new FormData();
+    for (const f of files) form.append('files', f as File);
+
+    try {
+      const res = await apiFetch(`/api/models/${modelId}/files`, {
+        method: 'POST',
+        body: form,
+      });
+
+      if (!res.ok) throw new Error('Upload failed');
+
+      await fetchModel();
+      onModelUpdated();
+      setSaveToast('Files added successfully');
+      setTimeout(() => setSaveToast(null), 2500);
+    } catch (err: any) {
+      alert(err.message || 'Error uploading files');
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
   // Delete model
   const handleDeleteModel = async () => {
     if (!model) return;
@@ -556,7 +583,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                   <span>by {model?.owner_username}</span>
                   <span aria-hidden="true">·</span>
                   <span>
-                    {model?.files.length} {model?.files.length === 1 ? 'file' : 'files'}
+                    {model?.files.length || 0} {model?.files.length === 1 ? 'file' : 'files'}
                   </span>
                   {currentActiveFile && (
                     <>
@@ -594,14 +621,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
             </div>
           </div>
 
-          {/* Modal Body: 2 Columns (3D Viewport on Left, Specs & Files on Right) */}
+          {/* Modal Body */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto">
             {/* Left Column: 3D Viewport Stage */}
             <div className="lg:col-span-7 bg-[#121214] flex flex-col relative border-b lg:border-b-0 lg:border-r border-[#252530] min-h-[400px] lg:min-h-[560px]">
-              {/* Viewport Canvas Container */}
               <div ref={mountRef} className="w-full h-full flex-1 cursor-grab active:cursor-grabbing" />
 
-              {/* Active File Switcher Overlay (Top-Left of 3D Viewport) */}
+              {/* Active File Switcher Overlay */}
               {model && model.files.length > 1 && (
                 <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs shadow-xl">
                   <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1.5 shrink-0">
@@ -625,7 +651,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 </div>
               )}
 
-              {/* Loading Indicator for mesh swap */}
               {loadingMesh && (
                 <div className="absolute top-4 right-4 z-20 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs text-blue-400 flex items-center gap-2 shadow-lg">
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -633,7 +658,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 </div>
               )}
 
-              {/* Viewport Control Overlay (Bottom Dock) */}
+              {/* Viewport Controls */}
               <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-[#1b1b24]/90 backdrop-blur-md border border-[#2e2e3d] rounded-xl shadow-xl text-xs z-10">
                 <button
                   onClick={toggleWireframe}
@@ -672,9 +697,9 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
               )}
             </div>
 
-            {/* Right Column: Slicing Mesh Analytics & Asset Management */}
+            {/* Right Column: Analytics & Management */}
             <div className="lg:col-span-5 p-6 flex flex-col gap-6 overflow-y-auto bg-[#18181f]">
-              {/* Slicing Mesh Analytics Panel for Currently Displayed File */}
+              {/* Slicing Analytics */}
               <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-white flex items-center gap-2">
@@ -692,7 +717,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 )}
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                  {/* Bounding Box Dimensions */}
                   <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
                     <span className="text-[10px] text-neutral-400">Dimensions (XYZ)</span>
                     <span className="font-mono font-bold text-white mt-1 tabular-nums">
@@ -701,7 +725,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Mesh Volume */}
                   <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
                     <span className="text-[10px] text-neutral-400">Watertight Volume</span>
                     <span className="font-mono font-bold text-white mt-1 tabular-nums">
@@ -710,7 +733,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Estimated Weight */}
                   <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
                     <span className="text-[10px] text-neutral-400">Est. PLA Weight</span>
                     <span className="font-mono font-bold text-emerald-400 mt-1 tabular-nums">
@@ -719,12 +741,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     </span>
                   </div>
 
-                  {/* Filament Cost Estimate */}
                   <div className="col-span-2 sm:col-span-3 p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex items-center justify-between">
                     <div>
                       <span className="text-[10px] text-neutral-400 block">Estimated Filament Cost</span>
                       <span className="font-mono font-bold text-amber-400 text-sm mt-0.5 tabular-nums">
-                        ${meshStats.costUsd.toFixed(2)}{' '}
+                        ${estimatedCostUsd.toFixed(2)}{' '}
                         <span className="text-[10px] font-normal text-neutral-400">USD</span>
                       </span>
                     </div>
@@ -749,7 +770,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 </div>
               </div>
 
-              {/* Extracted Files List with Instant Switcher & Primary Toggles */}
+              {/* Files List */}
               <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-white flex items-center gap-2">
@@ -838,7 +859,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 </div>
               </div>
 
-              {/* Collection Assignment */}
+              {/* Collections Block */}
               <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2.5">
                 <h3 className="text-xs font-bold text-white flex items-center gap-2">
                   <FolderPlus className="w-4 h-4 text-blue-400" />
@@ -957,7 +978,31 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 )}
               </div>
 
-              {/* Danger Zone: Delete Model */}
+              {/* Add Files Block */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2.5">
+                <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                  <FolderPlus className="w-4 h-4 text-blue-400" /> Add Additional Files
+                </h3>
+
+                <input
+                  type="file"
+                  multiple
+                  accept=".stl,.3mf,.obj,.zip,.7z"
+                  ref={fileInputRef}
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
+
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg justify-center transition-colors"
+                >
+                  <Upload className="w-4 h-4" /> Add Files
+                </button>
+              </div>
+
+              {/* Danger Zone */}
               {isOwnerOrAdmin && (
                 <div className="pt-2 flex justify-end">
                   <button
@@ -973,6 +1018,8 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
           </div>
         </div>
       </div>
-      </ErrorBoundary>
+    </ErrorBoundary>
   );
 };
+
+export default ModelViewerModal;

@@ -510,4 +510,38 @@ router.post('/:id/thumbnail-client', (req, res) => {
   }
 });
 
+// POST /api/models/:id/files — Add additional 3D files to an existing model
+router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), async (req, res) => {
+  const { id } = req.params;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
+
+  const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
+  if (!model) {
+    return res.status(404).json({ error: 'Model not found' });
+  }
+  if (model.user_id !== userId) {
+    return res.status(403).json({ error: 'Permission denied' });
+  }
+
+  const files = (req.files as Express.Multer.File[]) || [];
+  if (!files.length) return res.status(400).json({ error: 'No files provided' });
+
+  const processedFiles = await processModelFiles(id, files);
+
+  // Recalculate primary 3D file if needed
+  const model3dFiles = processedFiles.filter(f => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
+  if (model3dFiles.length > 0) {
+    const currentPrimary = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id);
+    const largest = model3dFiles.reduce((best, f) => (!best || f.file_size > best.file_size) ? f : best, null as any);
+    if (!currentPrimary || largest.file_size > currentPrimary.file_size) {
+      db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
+      db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largest.id);
+    }
+  }
+
+  res.json({ files: processedFiles });
+});
 export default router;
