@@ -10,6 +10,7 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
 import { apiFetch, getStoredToken, setStoredToken, setStoredUser } from './utils/api';
+import { useVaultData } from './hooks/useVaultData';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -134,9 +135,9 @@ export default function App() {
     if (currentUser) {
       fetchCollections();
       fetchTags();
-      fetchModels();
+      // fetchModels is now handled inside the hook
     }
-  }, [currentUser, fetchCollections, fetchTags, fetchModels]);
+  }, [currentUser, fetchCollections, fetchTags]);
 
   // Tab change handler (all, mine, favorites)
   const handleTabChange = (tab: 'all' | 'mine' | 'favorites') => {
@@ -567,7 +568,7 @@ export default function App() {
           onClose={() => setSelectedModelId(null)}
           onModelUpdated={() => {
             // Model was updated/uploaded - refresh specific view data only
-            fetchModels();  // Models might have changed (new uploads from same user)
+            fetchModels();
             // Tags and collections don't change when model is selected for viewing
           }}
         />
