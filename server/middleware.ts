@@ -113,10 +113,23 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
     if (sessionUserId) {
       console.log('[AUTH] Using session cookie for user resolution (userId=' + sessionUserId + ')');
       req.userId = sessionUserId;
-      // Placeholder username - actual user details are loaded via /api/auth/me endpoint
-      (req as any).username = 'session_user_' + sessionUserId.substring(0, 6);
-      (req as any).role = 'user';
-      (req as any).tokenType = 'session';
+      // Load real user details from DB to preserve role and username for session auth
+      try {
+        const user = db.prepare('SELECT username, role FROM users WHERE id = ?').get(sessionUserId) as { username: string; role: 'admin' | 'user' } | undefined;
+        if (user) {
+          req.username = user.username;
+          req.role = user.role;
+        } else {
+          // Fallback if user not found
+          req.username = 'session_user_' + sessionUserId.substring(0, 6);
+          req.role = 'user';
+        }
+      } catch (err) {
+        console.warn('[AUTH] Failed to load user from DB for session:', err);
+        req.username = 'session_user_' + sessionUserId.substring(0, 6);
+        req.role = 'user';
+      }
+      req.tokenType = 'session';
     } else {
       console.log(`[AUTH] No token and no session for path: ${req.path}`);
     }
