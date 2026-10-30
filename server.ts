@@ -84,7 +84,26 @@ if (
   process.exit(1);
 }
 
-console.log('[SLAG3D SECURITY] Security validation passed - JWT_SECRET & SESSION_SECRET properly configured');
+// REFRESH_TOKEN_SECRET Validation
+const refreshTokenSecret = process.env.REFRESH_TOKEN_SECRET;
+if (!refreshTokenSecret || refreshTokenSecret.length < 32) {
+  console.error('[SLAG3D CRITICAL SECURITY ERROR] REFRESH_TOKEN_SECRET is missing or too short.', {
+    requiredMinLength: 32,
+    providedLength: refreshTokenSecret ? refreshTokenSecret.length : 'NOT SET'
+  });
+  process.exit(1);
+}
+
+if (
+  refreshTokenSecret.includes('EXAMPLE') || 
+  refreshTokenSecret.includes('<generate') || 
+  refreshTokenSecret.includes('default')
+) {
+  console.error('[SLAG3D CRITICAL ERROR] REFRESH_TOKEN_SECRET contains example/placeholder text.');
+  process.exit(1);
+}
+
+console.log('[SLAG3D SECURITY] Security validation passed - JWT_SECRET, REFRESH_TOKEN_SECRET & SESSION_SECRET properly configured');
 
 // Initialize DB schema & seed admin
 initDatabase();

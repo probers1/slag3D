@@ -2,13 +2,10 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
-import { requireAuth } from '../middleware.ts';
+import { requireAuth, JWT_SECRET, REFRESH_TOKEN_SECRET } from '../middleware.ts';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
-
-export const JWT_SECRET = process.env.JWT_SECRET;
-export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET || crypto.randomBytes(32).toString('hex');
 
 const router = Router();
 
