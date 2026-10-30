@@ -11,7 +11,7 @@ import { fileURLToPath } from 'url';
 import { initDatabase, db, dbPath } from './server/db.ts';
 
 // Import Middleware & Routers
-import { authResolverMiddleware } from './server/middleware.ts';
+import { authResolverMiddleware, csrfProtection } from './server/middleware.ts';
 import authRouter from './server/routes/auth.ts';
 import adminRouter from './server/routes/admin.ts';
 import collectionsRouter from './server/routes/collections.ts';
@@ -96,8 +96,11 @@ if (isPlaceholder(refreshTokenSecret)) {
 
 console.log('[SLAG3D SECURITY] Security validation passed - JWT_SECRET, REFRESH_TOKEN_SECRET & SESSION_SECRET properly configured');
 
-// Initialize DB schema & seed admin
-initDatabase();
+// Initialize DB schema & seed admin (initDatabase awaits internally in server/db.ts when DO_SEED=true)
+initDatabase().catch((err) => {
+  console.error('[SLAG3D] Database initialization failed:', err);
+  process.exit(1);
+});
 
 const app = express();
 const PORT = 3000;
@@ -113,16 +116,13 @@ if (!fs.existsSync(thumbDir)) {
   fs.mkdirSync(thumbDir, { recursive: true });
 }
 
-// Serve uploaded files statically
-app.use('/uploads', express.static(uploadDir));
-
 // Configure SQLite Session Store
 const SQLiteStore = connectSqlite3(session);
 const sessionDir = path.dirname(dbPath);
 if (!fs.existsSync(sessionDir)) {
   fs.mkdirSync(sessionDir, { recursive: true });
 }
-const sessionStore = new SQLiteStore({
+const sessionStore: any = new SQLiteStore({
   db: 'sessions.db',
   dir: sessionDir,
 });
@@ -146,6 +146,16 @@ app.use(
 );
 
 app.use(authResolverMiddleware);
+app.use(csrfProtection);
+
+// Serve uploaded files statically (auth required - uploaded 3D assets are user data)
+// Registered after authResolverMiddleware so req.userId is resolved before the check.
+app.use('/uploads', (req, res, next) => {
+  if (!req.userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+  next();
+}, express.static(uploadDir));
 
 // =============================================================================
 // API ROUTES & RATE LIMITING
@@ -193,6 +203,16 @@ if (!isProduction) {
     res.sendFile(path.resolve(distDir, 'index.html'));
   });
 }
+
+// Global Express error handler - ensures JSON error responses instead of HTML stack traces
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error('[SLAG3D] Unhandled error:', err?.message || err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  const status = err?.status || err?.statusCode || 500;
+  res.status(status).json({ error: err?.message || 'Internal server error' });
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[SLAG3D] Server running at http://0.0.0.0:${PORT}`);

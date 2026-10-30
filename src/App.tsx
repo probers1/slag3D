@@ -9,7 +9,7 @@ import { AdminModal } from './components/AdminModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
-import { apiFetch, getStoredToken, setStoredToken, setStoredUser } from './utils/api';
+import { apiFetch, getStoredToken, setStoredToken, setStoredUser, setStoredCsrfToken } from './utils/api';
 import { useVaultData } from './hooks/useVaultData';
 
 export default function App() {
@@ -139,8 +139,13 @@ export default function App() {
     }
   }, [currentUser, fetchCollections, fetchTags]);
 
-  // Tab change handler (all, mine, favorites)
-  const handleTabChange = (tab: 'all' | 'mine' | 'favorites') => {
+  // Fetch models whenever filters, pagination, or user context change
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
+  // Tab change handler (all, mine, favorites, collections)
+  const handleTabChange = (tab: 'all' | 'mine' | 'favorites' | 'collections') => {
     setActiveTab(tab);
     setCurrentPage(1);
     if (tab !== 'collections') {
@@ -185,6 +190,7 @@ export default function App() {
       await apiFetch('/api/auth/logout', { method: 'POST' });
       setStoredToken(null);
       setStoredUser(null);
+      setStoredCsrfToken(null);
       setCurrentUser(null);
       setModels([]);
     } catch (err) {

@@ -125,7 +125,11 @@ export async function initDatabase(): Promise<void> {
 function applyFallbackTables(): void {
   // First-time initialization
   db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_versions CHECK(id = 1) WITH (id=1, 'version' INTEGER CHECK(version IN (0,1)) DEFAULT 0, 'applied_at' TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS schema_versions (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      version INTEGER NOT NULL UNIQUE,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
   `);
 
   // Create all base tables
@@ -218,8 +222,8 @@ function applyFallbackTables(): void {
   `);
 
   // Seed admin user if GOOSE_SEED_DB and no users exist
-  const countRow = db.prepare('SELECT COUNT(*) FROM users').get() as { COUNT: number };
-  if (countRow?.COUNT === 0 && process.env.GOOSE_SEED_DB === 'true') {
+  const countRow = db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number };
+  if (countRow?.count === 0 && process.env.GOOSE_SEED_DB === 'true') {
     const salt = bcrypt.genSaltSync(10);
     const hash = bcrypt.hashSync('admin123', salt);
     const insert = db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')`);
@@ -244,5 +248,5 @@ if (process.env.SESSION_SECRET?.length && process.env.SESSION_SECRET.length < 32
 
 // Initialize on startup in dev/seed mode only
 if (process.env.DO_SEED === 'true' && process.env.DO_SEED !== undefined) {
-  initDatabase().catch(console.error);
+  await initDatabase();
 }

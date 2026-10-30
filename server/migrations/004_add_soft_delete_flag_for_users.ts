@@ -14,7 +14,7 @@
 
 import type Database from 'better-sqlite3';
 
-export function v4_add_soft_delete_column_to_users(db: Database): { version: number; timestamp: string } {
+export function v4_add_soft_delete_column_to_users(db: Database.Database): { version: number; timestamp: string } {
   const tx = db.transaction(() => {
     // Ensure users table exists before attempting to alter it
     const tableInfo = db

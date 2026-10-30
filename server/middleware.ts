@@ -28,8 +28,8 @@ declare module 'express-session' {
 
 // Export constants for reuse by other modules (including auth.ts)
 // SECURITY: JWT_SECRET must be set in .env file or environment - no fallback
-export const JWT_SECRET = process.env.JWT_SECRET;
-export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET;
+export const JWT_SECRET = process.env.JWT_SECRET as string;
+export const REFRESH_TOKEN_SECRET = process.env.REFRESH_TOKEN_SECRET as string;
 
 declare module 'express-session' {
   interface SessionData {
@@ -68,32 +68,46 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
     if (token) {
       try {
         // Try to verify as access token first (standard JWT secret)
-        const decoded = jwt.verify(token, JWT_SECRET);
+        const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & {
+          userId?: string;
+          username?: string;
+          role?: string;
+        };
 
         if (decoded) {
           // Successfully verified as access token
           console.log('[AUTH] Access token verified successfully');
 
           // Set user fields in request for use in other middleware
-          req.userId = decoded.userId;
-          req.username = decoded.username;
-          req.role = decoded.role;
+          req.userId = decoded.userId as string;
+          req.username = decoded.username as string;
+          req.role = decoded.role as 'admin' | 'user';
           req.tokenType = 'access';
           tokenResolved = true;
         } else {
           // Access token verification failed, try refresh token verification
           try {
-            const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as { data?: string } | JwtPayload;
+            const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as unknown as { data?: string };
 
-            if ('data' in decodedRefresh && decodedRefresh.data) {
+            if (decodedRefresh.data) {
               const [_, userId] = decodedRefresh.data.split(':');
               if (userId) {
                 // Valid refresh token - rotate it in the background and get user info
                 console.log('[AUTH] Refresh token detected - starting rotation');
                 setRefreshTokenRotation(userId, token);
                 req.userId = userId;
-                req.username = 'refresh_user';
-                req.role = 'user';
+
+                // Load the real user record to restore username/role (e.g. admin role) after refresh
+                const refreshUser = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as
+                  | { username: string; role: 'admin' | 'user' }
+                  | undefined;
+                if (refreshUser) {
+                  req.username = refreshUser.username;
+                  req.role = refreshUser.role;
+                } else {
+                  req.username = 'refresh_user';
+                  req.role = 'user';
+                }
                 req.tokenType = 'refresh';
                 tokenResolved = true;
               }
@@ -168,5 +182,50 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.role !== 'admin') {
     return res.status(403).json({ error: 'Administrator privilege required' });
   }
+  next();
+}
+
+// Paths that bypass CSRF validation (token issued/used via Bearer header or public endpoints)
+const CSRF_EXEMPT_PREFIXES = ['/api/auth/login', '/api/auth/refresh', '/api/auth/csrf-token', '/api/auth/logout', '/api/health', '/api/tags'];
+
+/**
+ * CSRF double-submit protection for unsafe /api methods.
+ * Requires the `x-csrf-token` header to match the `slag3d_csrf_token` cookie.
+ * Exempt: /api/auth/login, /api/auth/refresh, /api/auth/csrf-token, /api/auth/logout,
+ *         /api/health, /api/tags and all safe methods.
+ */
+export function csrfProtection(req: Request, res: Response, next: NextFunction) {
+  const method = (req.method || 'GET').toUpperCase();
+  const isSafe = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
+  const isExempt = CSRF_EXEMPT_PREFIXES.some(
+    (p) => req.path === p || req.path.startsWith(`${p}/`)
+  );
+
+  if (isSafe) return next();
+  if (!req.path.startsWith('/api')) return next();
+  if (isExempt) return next();
+
+  // Read double-submit token from cookie
+  let cookieToken: string | undefined;
+  const cookieHeader = req.headers.cookie;
+  if (cookieHeader) {
+    for (const part of cookieHeader.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx > -1) {
+        const key = part.slice(0, idx).trim();
+        const val = part.slice(idx + 1).trim();
+        if (key === 'slag3d_csrf_token') cookieToken = val;
+      }
+    }
+  }
+
+  // Read double-submit token from header (sent by client via apiFetch)
+  const headerToken = req.headers['x-csrf-token'];
+  const headerTokenStr = Array.isArray(headerToken) ? headerToken[0] : headerToken;
+
+  if (!cookieToken || !headerTokenStr || headerTokenStr !== cookieToken) {
+    return res.status(403).json({ error: 'CSRF token validation failed' });
+  }
+
   next();
 }

@@ -158,9 +158,9 @@ router.post('/:id/models', async (req, res) => {
 
     // Success confirmation
     res.json({ message: 'Model added to collection successfully' });
-  } catch (error) {
-    console.error('Transaction failed when adding model to collection:', error);
-    res.status(500).json({ error: error.message || 'Failed to add model to collection due to internal error.' });
+  } catch (error: any) {
+    console.error('Transaction failed when adding model to collection:', error?.message || error);
+    res.status(500).json({ error: error?.message || 'Failed to add model to collection due to internal error.' });
   }
 });
 

@@ -11,6 +11,9 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET:-}
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET:-}
+      - SESSION_EXPIRY_MINUTES=${SESSION_EXPIRY_MINUTES:-1440}
     secrets:
       - session_secret
       # Secret injection into container environment. 

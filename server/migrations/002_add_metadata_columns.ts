@@ -9,7 +9,7 @@ import Database from 'better-sqlite3';
  * - adds timestamps to collections
  */
 
-export function v2_add_metadata_columns(db: Database): { version: number; timestamp: string } {
+export function v2_add_metadata_columns(db: Database.Database): { version: number; timestamp: string } {
   console.log('[MIGRATION v2] Adding metadata columns...\n');
 
   // Add width and height columns to models table if not exists

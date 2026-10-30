@@ -5,16 +5,15 @@
 import Database from 'better-sqlite3';
 import { v1_initial_schema } from './001_initial_schema';
 import { v2_add_metadata_columns } from './002_add_metadata_columns';
-// Removed v3_add_soft_delete because it incorrectly targeted users table
-
+import { v4_add_soft_delete_column_to_users } from './004_add_soft_delete_flag_for_users';
 
 // Helper types
-type MigrationFunc = (db: Database) => { version: number; timestamp: string };
+type MigrationFunc = (db: Database.Database) => { version: number; timestamp: string };
 
 /**
  * Get current schema version from database
  */
-function getCurrentVersion(db: Database): number {
+function getCurrentVersion(db: Database.Database): number {
   try {
     const row = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`)
       .get() as { version: number } | null;
@@ -28,7 +27,7 @@ function getCurrentVersion(db: Database): number {
 /**
  * Check if schema_versions table exists
  */
-function hasSchemaTable(db: Database): boolean {
+function hasSchemaTable(db: Database.Database): boolean {
   try {
     const rows = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='schema_versions'`).all();
     return rows.length > 0;
@@ -41,7 +40,7 @@ function hasSchemaTable(db: Database): boolean {
 /**
  * Create schema_versions table if it doesn't exist (first-time setup)
  */
-function ensureMigrationTable(db: Database): void {
+function ensureMigrationTable(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_versions (
       id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -54,7 +53,7 @@ function ensureMigrationTable(db: Database): void {
 /**
  * Run all pending migrations
  */
-export function runMigrations(db: Database): { applied: number[]; skipped: number[]; errors: Record<number, Error> } {
+export function runMigrations(db: Database.Database): { applied: number[]; skipped: number[]; errors: Record<number, Error> } {
   let applied: number[] = [];
   const skipped: number[] = [];
   const errors: Record<number, Error> = {};
@@ -68,38 +67,37 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
     ensureMigrationTable(db);
   }
 
-  // Define migrations to apply (v1, v2, v3+)
+  // Define migrations to apply, in ascending version order.
+  // NOTE: v3 was abandoned (it targeted the wrong table); the real soft-delete
+  // migration for users is v4 (server/migrations/004_add_soft_delete_flag_for_users.ts).
   const migrations = [
-    { version: 1, func: v1_initial_schema as MigrationFunc },
-    { version: 2, func: typeof v2_add_metadata_columns === 'function' ? v2_add_metadata_columns : null },
-    { version: 3, func: typeof v4_add_soft_delete_column_to_users === 'function' ? v4_add_soft_delete_column_to_users : null }
-  ] as const;
+    { version: 1, func: v1_initial_schema },
+    { version: 2, func: v2_add_metadata_columns },
+    { version: 4, func: v4_add_soft_delete_column_to_users },
+  ];
 
   for (const { version, func } of migrations) {
     // Check if already applied by looking up this specific version
     try {
-      const existing = db.prepare(`SELECT version FROM schema_versions WHERE version = ?`).get() as 
-        { version?: number } | null;
-      
+      const existing = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`)
+        .get() as { version?: number } | null;
+
       if (existing && existing.version === version) {
         console.log(`[MIGRATIONS] Skipping migration v${version} (already applied)`);
         skipped.push(version);
         continue;
       }
     } catch (err: any) {
-      // If no row found, .get() returns null, not an exception - that's fine
-      if (!err.message || !err.message.includes('no such table')) {}
-      else {
-        errors[version] = err;
-      }
+      errors[version] = err;
+      continue;
     }
 
     try {
       console.log(`[Migration v${version}] Executing...`);
-      
+
       const result = func(db);
-      
-      // Handle INSERT for single-row schema_versions table 
+
+      // Handle INSERT for single-row schema_versions table
       // Must specify id because CHECK(id = 1) is enforced
       const insertVersionStmt = db.prepare(`
         INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)
@@ -107,13 +105,13 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
           version = excluded.version,
           applied_at = excluded.applied_at
       `);
-      
+
       insertVersionStmt.run(version, new Date().toISOString());
-      
+
       console.log(`[Migration v${version}] Applied successfully`);
       applied.push(version);
     } catch (err: any) {
-      console.error(`[Migration v${version}] Error: ${err.message}`);
+      console.error(`[Migration v${version}] Error:`, err?.message || err);
       errors[version] = err;
     }
   }
@@ -129,5 +127,3 @@ export function runMigrations(db: Database): { applied: number[]; skipped: numbe
 
 // Re-export for convenience (handled by tsx runtime compilation)
 export { v1_initial_schema, v2_add_metadata_columns, v4_add_soft_delete_column_to_users };
-export { v4_add_soft_delete_column_to_users };
-

@@ -4,8 +4,8 @@ import { User } from '../types';
 
 interface NavbarProps {
   user: User | null;
-  activeTab: 'all' | 'mine' | 'favorites';
-  onTabChange: (tab: 'all' | 'mine' | 'favorites') => void;
+  activeTab: 'all' | 'mine' | 'favorites' | 'collections';
+  onTabChange: (tab: 'all' | 'mine' | 'favorites' | 'collections') => void;
   onOpenUpload: () => void;
   onOpenAdmin: () => void;
   onOpenPasswordModal: () => void;

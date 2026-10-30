@@ -1,10 +1,14 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import StreamZip from 'node-stream-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
+
+const execAsync = promisify(exec);
 
 // Allowed file extensions (3D models and safe archives)
 const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
@@ -165,6 +169,47 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
         console.error(`Error unzipping file ${file.originalname}:`, err);
       } finally {
         // Clean up temporary uploaded zip
+        try { fs.unlinkSync(file.path); } catch {}
+      }
+    } else if (ext === '.7z') {
+      // Extract 7z archive using system 7z binary (p7zip) — mirrors the .zip extraction flow
+      const tempDir = fs.mkdtempSync(path.join(path.resolve(process.cwd(), 'uploads', 'tmp'), '7z-XXXXXX'));
+      const archiveCopy = path.join(tempDir, 'archive.7z');
+      fs.copyFileSync(file.path, archiveCopy);
+      try {
+        await execAsync(`7z x -y "${archiveCopy}" -o"${tempDir}"`);
+
+        const extractedEntries = (fs.readdirSync(tempDir, { recursive: true }) as string[])
+          .map((f) => path.join(tempDir, f))
+          .filter((p: string) => {
+            try {
+              return fs.statSync(p).isFile() && ['.stl', '.3mf', '.obj'].includes(path.extname(p).toLowerCase());
+            } catch {
+              return false;
+            }
+          });
+
+        for (const p of extractedEntries) {
+          const destName = `${uuidv4()}_${path.basename(p)}`;
+          const destPath = path.join(modelDir, destName);
+          fs.copyFileSync(p, destPath);
+          const stat = fs.statSync(destPath);
+          const entryExt = path.extname(p).toLowerCase();
+          const mimeType = entryExt === '.stl' ? 'model/stl' : entryExt === '.3mf' ? 'model/3mf' : entryExt === '.obj' ? 'model/obj' : 'application/octet-stream';
+          processedFiles.push({
+            id: uuidv4(),
+            filename: destName,
+            original_name: path.basename(p),
+            mime_type: mimeType,
+            file_size: stat.size,
+            file_path: `/uploads/models/${modelId}/${destName}`,
+            is_primary_3d: 0,
+          });
+        }
+      } catch (err) {
+        console.error(`Error extracting 7z file ${file.originalname}:`, err);
+      } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
         try { fs.unlinkSync(file.path); } catch {}
       }
     } else {

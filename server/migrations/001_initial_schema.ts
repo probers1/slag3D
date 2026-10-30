@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
  * Migration v1 - Initial Schema Creation
  */
 
-export function v1_initial_schema(db: Database): { version: number; timestamp: string } {
+export function v1_initial_schema(db: Database.Database): { version: number; timestamp: string } {
   console.log('[MIGRATION v1] Creating initial schema...\n');
 
   const migrations = `

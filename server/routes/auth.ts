@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
 import { requireAuth, JWT_SECRET, REFRESH_TOKEN_SECRET } from '../middleware.ts';
-import jwt, { JwtPayload } from 'jsonwebtoken';
+import jwt, { JwtPayload, SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 
@@ -57,8 +57,8 @@ function validatePasswordStrength(password: string): boolean {
  * Generate access token with user payload
  */
 function generateAccessToken(payload: { userId: string; username: string; role: string }): string {
-  const secret = process.env.JWT_SECRET;
-  return jwt.sign(payload, secret, { expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN });
+  const secret = process.env.JWT_SECRET as string;
+  return jwt.sign(payload, secret, { expiresIn: TOKEN_CONFIG.ACCESS_EXPIRES_IN } as SignOptions);
 }
 
 /**
@@ -66,7 +66,7 @@ function generateAccessToken(payload: { userId: string; username: string; role: 
  */
 function generateRefreshToken(userId: string): string {
   const random = crypto.randomBytes(32).toString('hex');
-  const token = jwt.sign({ data: `${random}:${userId}` }, REFRESH_TOKEN_SECRET, { expiresIn: TOKEN_CONFIG.REFRESH_EXPIRES_IN });
+  const token = jwt.sign({ data: `${random}:${userId}` }, REFRESH_TOKEN_SECRET, { expiresIn: TOKEN_CONFIG.REFRESH_EXPIRES_IN } as SignOptions);
   
   // Always update auth_tokens on refresh - implements token rotation
   try {
@@ -158,7 +158,7 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
   let user: { username: string; role: 'admin' | 'user' } | undefined;
   try {
     // Verify the refresh token and get user ID from it
-    const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET) as { data: string };
+    const decoded = jwt.verify(refreshToken, REFRESH_TOKEN_SECRET) as unknown as { data: string };
     const [_, storedUserId] = decoded.data.split(':');
     userId = storedUserId || null;
     
@@ -279,7 +279,12 @@ router.put('/change-password', requireAuth, (req, res) => {
   }
 
   // Verify current password (timing-attack safe)
-  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(req.session.userId) as
+  const userId = req.userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const user = db.prepare('SELECT id, password_hash FROM users WHERE id = ?').get(userId) as
     | { id: string; password_hash: string }
     | undefined;
 
@@ -290,10 +295,10 @@ router.put('/change-password', requireAuth, (req, res) => {
   const newHash = bcrypt.hashSync(newPassword, 10);
   
   // Update password AND invalidate all auth tokens (security best practice)
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, req.session.userId);
-  db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(req.session.userId);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+  db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(userId);
   
-  console.log(`[AUTH] Password changed for ${req.session.username}. All previous tokens invalidated.`);
+  console.log(`[AUTH] Password changed for ${userId}. All previous tokens invalidated.`);
 
   res.json({ message: 'Password updated successfully' });
 });

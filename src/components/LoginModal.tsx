@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Box, Lock, User as UserIcon, AlertCircle, ArrowRight } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { User } from '../types';
-import { apiFetch, setStoredToken, setStoredUser } from '../utils/api';
+import { apiFetch, setStoredToken, setStoredUser, setStoredCsrfToken } from '../utils/api';
 
 interface LoginModalProps {
   onLoginSuccess: (user: User) => void;
@@ -33,6 +33,11 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
       // Store the access token for future API requests (fallback auth)
       if (data.accessToken) {
         setStoredToken(data.accessToken);
+      }
+
+      // Store the CSRF token for double-submit validation on state-changing requests
+      if (data.csrfToken) {
+        setStoredCsrfToken(data.csrfToken);
       }
 
       // Store user info
@@ -102,6 +107,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
                 <Lock className="w-4 h-4 text-neutral-500 absolute left-3 top-2.5" />
                 <input
                   type="password"
+                  autoComplete="current-password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

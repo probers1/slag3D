@@ -9,7 +9,7 @@
 
 import Database from 'better-sqlite3';
 
-export function v3_add_soft_delete(db: Database): { version: number; timestamp: string } {
+export function v3_add_soft_delete(db: Database.Database): { version: number; timestamp: string } {
   // Use pragma_table_info to check if column exists
   const columns = db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string; type?: string }> | [];
 

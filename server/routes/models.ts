@@ -204,50 +204,71 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
   if (!userId) {
     return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
   }
-  const { title, description = '', tags = '', collection_id } = req.body;
 
-  const files = (req.files as Express.Multer.File[]) || [];
-  if (!files || files.length === 0) {
-    return res.status(400).json({ error: 'At least one 3D file or archive (.stl, .3mf, .obj, .zip, .7z) is required' });
-  }
+  try {
+    const { title, description = '', tags = '', collection_id } = req.body;
 
-  const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
-  const modelId = uuidv4();
-
-  db.prepare(`
-    INSERT INTO models (id, user_id, title, description, thumbnail_status)
-    VALUES (?, ?, ?, ?, 'pending')
-  `).run(modelId, userId, modelTitle, String(description).trim());
-
-  // Extract and process files
-  const processedFiles = await processModelFiles(modelId, files);
-
-  // Sync tags
-  if (tags) {
-    syncModelTags(modelId, tags);
-  }
-
-  // Link to collection if specified
-  if (collection_id) {
-    const coll = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collection_id, userId);
-    if (coll) {
-      db.prepare('INSERT OR IGNORE INTO collection_models (collection_id, model_id) VALUES (?, ?)').run(collection_id, modelId);
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'At least one 3D file or archive (.stl, .3mf, .obj, .zip, .7z) is required' });
     }
+
+    const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
+    const modelId = uuidv4();
+
+    db.prepare(`
+      INSERT INTO models (id, user_id, title, description, thumbnail_status)
+      VALUES (?, ?, ?, ?, 'pending')
+    `).run(modelId, userId, modelTitle, String(description).trim());
+
+    // Extract and process files
+    const processedFiles = await processModelFiles(modelId, files);
+
+    // Sync tags
+    if (tags) {
+      syncModelTags(modelId, tags);
+    }
+
+    // Link to collection if specified
+    if (collection_id) {
+      const coll = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collection_id, userId);
+      if (coll) {
+        db.prepare('INSERT OR IGNORE INTO collection_models (collection_id, model_id) VALUES (?, ?)').run(collection_id, modelId);
+      }
+    }
+
+    // Retrieve complete created model info
+    const createdModel = db.prepare(`
+      SELECT m.*, u.username as owner_username,
+        (SELECT COUNT(*) FROM favorites WHERE model_id = m.id AND user_id = ?) as is_favorited
+      FROM models m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.id = ?
+    `).get(userId, modelId);
+
+    res.status(201).json({
+      model: createdModel,
+      files: processedFiles,
+    });
+  } catch (err: any) {
+    console.error('[SLAG3D] Model upload failed:', err?.message || err);
+    // Clean up orphaned model record if processing failed midway
+    try {
+      const userIdForCleanup = req.session.userId || (req as any).userId;
+      if (userIdForCleanup) {
+        const orphanModel = db.prepare('SELECT id FROM models WHERE user_id = ? AND thumbnail_status = ?').all(userIdForCleanup, 'pending');
+        for (const m of orphanModel) {
+          // Best-effort cleanup of orphaned pending models
+          const dir = path.resolve(process.cwd(), 'uploads', 'models', (m as any).id);
+          try { fs.existsSync(dir) && fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+          db.prepare('DELETE FROM models WHERE id = ?').run((m as any).id);
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn('[SLAG3D] Orphan cleanup failed:', cleanupErr);
+    }
+    res.status(500).json({ error: 'Failed to process model upload' });
   }
-
-  // Retrieve complete created model info
-  const createdModel = db.prepare(`
-    SELECT m.*, u.username as owner_username,
-      (SELECT COUNT(*) FROM favorites WHERE model_id = m.id AND user_id = ?) as is_favorited
-    FROM models m
-    JOIN users u ON m.user_id = u.id
-    WHERE m.id = ?
-  `).get(userId, modelId);
-
-  res.status(201).json({
-    model: createdModel,
-    files: processedFiles,
-  });
 });
 
 // GET /api/models/:id — Full details, file paths, tags, collections
@@ -518,30 +539,38 @@ router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), as
     return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
   }
 
-  const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
-  if (!model) {
-    return res.status(404).json({ error: 'Model not found' });
-  }
-  if (model.user_id !== userId) {
-    return res.status(403).json({ error: 'Permission denied' });
-  }
-
-  const files = (req.files as Express.Multer.File[]) || [];
-  if (!files.length) return res.status(400).json({ error: 'No files provided' });
-
-  const processedFiles = await processModelFiles(id, files);
-
-  // Recalculate primary 3D file if needed
-  const model3dFiles = processedFiles.filter(f => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
-  if (model3dFiles.length > 0) {
-    const currentPrimary = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id);
-    const largest = model3dFiles.reduce((best, f) => (!best || f.file_size > best.file_size) ? f : best, null as any);
-    if (!currentPrimary || largest.file_size > currentPrimary.file_size) {
-      db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
-      db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largest.id);
+  try {
+    const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
+    if (!model) {
+      return res.status(404).json({ error: 'Model not found' });
     }
-  }
+    if (model.user_id !== userId) {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
 
-  res.json({ files: processedFiles });
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (!files.length) return res.status(400).json({ error: 'No files provided' });
+
+    const processedFiles = await processModelFiles(id, files);
+
+    // Recalculate primary 3D file if needed
+    const model3dFiles = processedFiles.filter(f => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
+    if (model3dFiles.length > 0) {
+      const currentPrimary: any = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id);
+      let largest: any = null;
+      for (const f of model3dFiles) {
+        if (!largest || f.file_size > largest.file_size) largest = f;
+      }
+      if (!currentPrimary || largest.file_size > currentPrimary.file_size) {
+        db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
+        db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largest.id);
+      }
+    }
+
+    res.json({ files: processedFiles });
+  } catch (err: any) {
+    console.error('[SLAG3D] Supplementary file upload failed:', err?.message || err);
+    res.status(500).json({ error: 'Failed to process file upload' });
+  }
 });
 export default router;

@@ -156,6 +156,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({ currentUserId, onClose }
               />
               <input
                 type="password"
+                autoComplete="new-password"
                 placeholder="Temporary Password"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
@@ -237,6 +238,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({ currentUserId, onClose }
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="password"
+                                  autoComplete="new-password"
                                   placeholder="New password"
                                   value={resetPasswordVal}
                                   onChange={(e) => setResetPasswordVal(e.target.value)}

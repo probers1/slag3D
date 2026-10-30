@@ -78,6 +78,9 @@ router.put('/users/:id/reset-password', (req, res) => {
   const hash = bcrypt.hashSync(newPassword, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
 
+  // Invalidate all refresh tokens issued to this user after a password reset
+  db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+
   res.json({ message: 'User password reset successfully' });
 });
 
@@ -107,7 +110,7 @@ router.delete('/users/:id', (req, res) => {
     if (modelsToArchive.length > 0) {
       console.log(`[DATA CLEANUP] ${modelsToArchive.length} models/files belong to deleted user ${id}. Data retained for recovery.`);
     }
-  } catch (err) {
+  } catch (err: any) {
     console.warn('[ADMIN] Cleanup warning:', err?.message);
   }
 

@@ -83,6 +83,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
                 <label className="block text-xs font-semibold text-neutral-300 mb-1">Current Password</label>
                 <input
                   type="password"
+                  autoComplete="current-password"
                   required
                   value={currentPassword}
                   onChange={(e) => setCurrentPassword(e.target.value)}
@@ -95,6 +96,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
                 <label className="block text-xs font-semibold text-neutral-300 mb-1">New Password (min 6 chars)</label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   required
                   value={newPassword}
                   onChange={(e) => setNewPassword(e.target.value)}
@@ -107,6 +109,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
                 <label className="block text-xs font-semibold text-neutral-300 mb-1">Confirm New Password</label>
                 <input
                   type="password"
+                  autoComplete="new-password"
                   required
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}

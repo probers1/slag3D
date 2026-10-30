@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../utils/api';
-import { ModelItem, TagItem, CollectionItem } from '../types';
-import { useAuth } from '../context/AuthContext'; // Assume an AuthContext exists or pass user manually
+import { ModelItem, TagItem, CollectionItem, User } from '../types';
 
 /*
  * useVaultData custom hook:

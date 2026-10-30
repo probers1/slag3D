@@ -1,5 +1,6 @@
 const TOKEN_KEY = 'slag3d_auth_token';
 const USER_KEY = 'slag3d_user';
+const CSRF_TOKEN_KEY = 'slag3d_csrf_token';
 
 export function getStoredToken(): string | null {
   try {
@@ -38,6 +39,24 @@ export function setStoredUser<T>(user: T | null) {
   } catch {}
 }
 
+export function getStoredCsrfToken(): string | null {
+  try {
+    return localStorage.getItem(CSRF_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredCsrfToken(token: string | null) {
+  try {
+    if (token) {
+      localStorage.setItem(CSRF_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(CSRF_TOKEN_KEY);
+    }
+  } catch {}
+}
+
 export async function apiFetch(url: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers || {});
 
@@ -45,6 +64,12 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
   const storedToken = getStoredToken();
   if (storedToken && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${storedToken}`);
+  }
+
+  // Attach double-submit CSRF token from localStorage if available
+  const storedCsrfToken = getStoredCsrfToken();
+  if (storedCsrfToken) {
+    headers.set('X-CSRF-Token', storedCsrfToken);
   }
 
   // Set credentials to include so session cookies are also transmitted when supported

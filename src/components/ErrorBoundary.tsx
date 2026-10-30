@@ -22,8 +22,8 @@ class ClassErrorBoundary extends React.Component<
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 
-  static getDerivedStateFromError(_: Error): ErrorBoundaryState {
-    return { hasError: true, error: _ };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error, errorInfo: null };
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
@@ -36,7 +36,8 @@ class ClassErrorBoundary extends React.Component<
 
   render(): React.JSX.Element {
     if (this.state.hasError) {
-      return this.props.fallback || (
+      return (
+        this.props.fallback || (
         <div className="flex items-center justify-center min-h-screen bg-red-50 p-8">
           <div className="text-center max-w-md bg-white rounded-lg shadow-xl p-6 border-2 border-red-200">
             <AlertCircle className="mx-auto h-12 w-12 text-red-500 mb-4" />
@@ -61,10 +62,11 @@ class ClassErrorBoundary extends React.Component<
             )}
           </div>
         </div>
-      );
+        )
+      ) as React.ReactElement;
     }
 
-    return this.props.children;
+    return this.props.children as React.ReactElement;
   }
 }
 
