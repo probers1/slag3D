@@ -243,6 +243,6 @@ if (process.env.SESSION_SECRET?.length && process.env.SESSION_SECRET.length < 32
 }
 
 // Initialize on startup in dev/seed mode only
-if (process.env.NODE_ENV !== 'production' || process.env.GOOSE_SEED_DB) {
+if (process.env.DO_SEED === 'true' && process.env.DO_SEED !== undefined) {
   initDatabase().catch(console.error);
 }
