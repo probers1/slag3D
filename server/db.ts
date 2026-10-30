@@ -232,8 +232,9 @@ function applyFallbackTables(): void {
   }
 
   // Record version
-  if (!db.prepare(`SELECT version FROM schema_versions`).get()) {
-    db.prepare(`INSERT INTO schema_versions (version, applied_at) VALUES (?, ?)`).run(1, new Date().toISOString());
+  const currentVersionRow = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`).get() as { version?: number } | null;
+  if (!currentVersionRow) {
+    db.prepare(`INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)`).run(1, new Date().toISOString());
   }
 
   console.log('[MIGRATIONS] Tables created\n');
