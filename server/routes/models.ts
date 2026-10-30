@@ -7,6 +7,7 @@ import { requireAuth } from '../middleware.ts';
 import { uploadMiddleware, processModelFiles } from '../upload.ts';
 import { enqueueThumbnailRender } from '../../lib/queue.ts';
 import rateLimit from 'express-rate-limit';
+import { getTagsWithCounts } from '../lib/tags.ts';
 
 const router = Router();
 router.use(requireAuth);
@@ -67,14 +68,7 @@ export function syncModelTags(modelId: string, tagsInput: string | string[]) {
 
 // GET /api/tags — Returns active tag list with usage counts
 router.get('/tags', (req, res) => {
-  const tags = db.prepare(`
-    SELECT t.id, t.name, COUNT(mt.model_id) as count
-    FROM tags t
-    JOIN model_tags mt ON t.id = mt.tag_id
-    GROUP BY t.id
-    HAVING count > 0
-    ORDER BY count DESC, t.name ASC
-  `).all();
+  const tags = getTagsWithCounts();
   res.json({ tags });
 });
 

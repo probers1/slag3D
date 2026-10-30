@@ -16,6 +16,7 @@ import authRouter from './server/routes/auth.ts';
 import adminRouter from './server/routes/admin.ts';
 import collectionsRouter from './server/routes/collections.ts';
 import modelsRouter from './server/routes/models.ts';
+import { getTagsWithCounts } from './server/lib/tags.ts';
 
 // =============================================================================
 // GLOBAL RATE LIMITING MIDDLEWARE
@@ -96,7 +97,7 @@ if (isPlaceholder(refreshTokenSecret)) {
 
 console.log('[SLAG3D SECURITY] Security validation passed - JWT_SECRET, REFRESH_TOKEN_SECRET & SESSION_SECRET properly configured');
 
-// Initialize DB schema & seed admin (initDatabase awaits internally in server/db.ts when DO_SEED=true)
+// Initialize DB schema & seed admin (admin seeded when GOOSE_SEED_DB=true)
 initDatabase().catch((err) => {
   console.error('[SLAG3D] Database initialization failed:', err);
   process.exit(1);
@@ -173,14 +174,7 @@ app.get('/api/health', (req, res) => {
 
 // Tags endpoint with rate limiting applied
 app.get('/api/tags', apiLimiter, (req, res) => {
-  const tags = db.prepare(`
-    SELECT t.id, t.name, COUNT(mt.model_id) as count
-    FROM tags t
-    JOIN model_tags mt ON t.id = mt.tag_id
-    GROUP BY t.id
-    HAVING count > 0
-    ORDER BY count DESC, t.name ASC
-  `).all();
+  const tags = getTagsWithCounts();
   res.json({ tags });
 });
 

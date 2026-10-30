@@ -25,7 +25,7 @@ server/migrations/
 └── README.md             # Developer documentation
 ```
 
-### 3. Current Schema Version: v2
+### 3. Current Schema Version: v4
 
 The migration system supports:
 - **v1**: Initial schema with users, models, files, tags, favorites, collections

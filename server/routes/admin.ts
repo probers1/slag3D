@@ -3,21 +3,10 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
 import { requireAdmin } from '../middleware.ts';
+import { validatePasswordStrength } from '../lib/passwordValidation.ts';
 
 const router = Router();
 router.use(requireAdmin);
-
-/**
- * Validates password strength: minimum 12 characters, at least one uppercase letter, and at least one number.
- */
-function validatePasswordStrength(password: string): boolean {
-  if (password.length < 12) {
-    return false;
-  }
-  const hasUppercase = /[A-Z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
-  return hasUppercase && hasNumber;
-}
 
 // GET /api/admin/users
 router.get('/users', (req, res) => {

@@ -10,10 +10,10 @@ This application uses a migration system to manage database schema changes safel
 - **Environment Safety**: Migrate database without risking data corruption
 - **Rollback Support**: Each migration is versioned for easy rollback
 
-## Current Schema Version: 2
+## Current Schema Version: 4
 
 The current database supports:
-- Users with authentication
+- Users with authentication and soft-delete
 - 3D models with multiple image files
 - Tag-based organization
 - Favorites and collections
@@ -28,6 +28,8 @@ migrations/
 ├── index.ts           # Migration runner and version tracking
 ├── 001_initial_schema.ts     v1: Initial database setup
 ├── 002_add_metadata_columns.ts   v2: Add metadata columns
+├── 003_add_soft_delete_flag.ts   v3: Soft delete for users (abandoned)
+├── 004_add_soft_delete_flag_for_users.ts   v4: Soft delete for users (active)
 └── README.md          # This file
 ```
 
@@ -141,6 +143,7 @@ This will require re-applying all migrations from the beginning.
 |---------|-----------|------------------------------|
 | v1      | Initial   | Initial database schema      |
 | v2      | Current   | Add metadata columns         |
+| v4      | Current   | Add soft delete to users     |
 | v3+     | Future    | New features being planned   |
 
 ## Troubleshooting

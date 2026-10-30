@@ -107,9 +107,9 @@ refreshToken = newRefreshToken;
 | Variable | Required Default | Description |
 |----------|-----------------|-------------|
 | `JWT_SECRET` | Optional* | Access token signing key |
-| `REFRESH_TOKEN_SECRET` | Optional* | Refresh token secret (auto-generated if not set) |
+| `REFRESH_TOKEN_SECRET` | Required | Refresh token secret (must be set) |
 
-\* Auto-generated on server start for REFRESH_TOKEN_SECRET
+\* Auto-generated on server start for JWT_SECRET if not set; REFRESH_TOKEN_SECRET is required
 
 ## Rollback Plan
 If issues arise, revert by:

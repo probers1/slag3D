@@ -247,7 +247,3 @@ if (process.env.SESSION_SECRET?.length && process.env.SESSION_SECRET.length < 32
   console.warn('[SLAG3D WARNING] SESSION_SECRET is set but less than 32 characters. Consider using a stronger secret.');
 }
 
-// Initialize on startup in dev/seed mode only
-if (process.env.DO_SEED === 'true' && process.env.DO_SEED !== undefined) {
-  await initDatabase();
-}

@@ -33,7 +33,7 @@ rm -f data/vault.db*   # Reset database (causes migration re-run)
 slag3D/
 ├── server/              # Express backend (DO NOT BUILD – use tsx)
 │   ├── db.ts            # DB connection + migrations entrypoint
-│   ├── migrations/      # Versioned schema upgrades (001*, 002*)
+│   ├── migrations/      # Versioned schema upgrades (001*, 002*, 004*)
 │   ├── routes/          # API route modules (auth, admin, models, collections)
 │   └── middleware.ts    # Auth resolvers, requireAuth, requireAdmin
 ├── src/                 # React frontend components only
@@ -58,7 +58,8 @@ Tracks schema evolution in `schema_versions` table to enable safe upgrades acros
 
 ### Files
 - `server/migrations/001_initial_schema.ts` — Base tables (users, models, files, etc.)
-- `server/migrations/002_add_metadata_columns.ts` — Width/height columns (may be redundant)
+- `server/migrations/002_add_metadata_columns.ts` — Width/height columns
+- `server/migrations/004_add_soft_delete_flag_for_users.ts` — Soft delete for users (v4)
 - `server/migrations/index.ts` — Migration runner
 
 ### Auto-run Behavior

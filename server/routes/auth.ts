@@ -6,6 +6,7 @@ import { requireAuth, JWT_SECRET, REFRESH_TOKEN_SECRET } from '../middleware.ts'
 import jwt, { JwtPayload, SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
+import { validatePasswordStrength } from '../lib/passwordValidation.ts';
 
 const router = Router();
 
@@ -41,17 +42,6 @@ const TOKEN_CONFIG = {
   REFRESH_EXPIRES_IN: '7d',    // Long-lived refresh token
 };
 
-/**
- * Validates password strength: minimum 12 characters, at least one uppercase letter, and at least one number.
- */
-function validatePasswordStrength(password: string): boolean {
-  if (password.length < 12) {
-    return false;
-  }
-  const hasUppercase = /[A-Z]/.test(password);
-  const hasNumber = /[0-9]/.test(password);
-  return hasUppercase && hasNumber;
-}
 
 /**
  * Generate access token with user payload
