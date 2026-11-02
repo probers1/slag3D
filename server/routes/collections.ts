@@ -124,8 +124,33 @@ router.delete('/:id', (req, res) => {
   res.json({ message: 'Collection deleted successfully' });
 });
 
+// Helper transaction to add model to collection atomically
+const addModelToCollectionTx = db.transaction((collectionId: string, modelId: string, uId: string) => {
+  // 1. Verify Collection and User Ownership
+  const collection = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collectionId, uId);
+  if (!collection) {
+    const err: any = new Error('Collection not found or unauthorized');
+    err.status = 404;
+    throw err;
+  }
+
+  // 2. Verify Model existence
+  const model = db.prepare('SELECT id FROM models WHERE id = ?').get(modelId);
+  if (!model) {
+    const err: any = new Error('Model not found');
+    err.status = 404;
+    throw err;
+  }
+
+  // 3. Insert the Model-Collection relationship (Idempotent)
+  db.prepare(`
+    INSERT OR IGNORE INTO collection_models (collection_id, model_id)
+    VALUES (?, ?)
+  `).run(collectionId, modelId);
+});
+
 // POST /api/collections/:id/models
-router.post('/:id/models', async (req, res) => {
+router.post('/:id/models', (req, res) => {
   const userId = req.userId;
   const { id } = req.params;
   const { model_id } = req.body;
@@ -134,33 +159,13 @@ router.post('/:id/models', async (req, res) => {
     return res.status(400).json({ error: 'model_id is required' });
   }
 
-  // Start transaction for data integrity
   try {
-    await db.transaction(async (tx) => {
-      // 1. Verify Collection and User Ownership
-      const collection = await tx.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);
-      if (!collection) {
-        throw new Error('Collection not found or unauthorized');
-      }
-
-      // 2. Verify Model existence
-      const model = await tx.prepare('SELECT id FROM models WHERE id = ?').get(model_id);
-      if (!model) {
-        throw new Error('Model not found');
-      }
-
-      // 3. Insert the Model-Collection relationship (Idempotent)
-      await tx.prepare(`
-        INSERT OR IGNORE INTO collection_models (collection_id, model_id)
-        VALUES (?, ?)
-      `).run(id, model_id);
-    });
-
-    // Success confirmation
+    addModelToCollectionTx(id, model_id, userId!);
     res.json({ message: 'Model added to collection successfully' });
   } catch (error: any) {
-    console.error('Transaction failed when adding model to collection:', error?.message || error);
-    res.status(500).json({ error: error?.message || 'Failed to add model to collection due to internal error.' });
+    console.error('Failed to add model to collection:', error?.message || error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error?.message || 'Failed to add model to collection due to internal error.' });
   }
 });
 

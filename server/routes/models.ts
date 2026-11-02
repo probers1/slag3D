@@ -199,6 +199,8 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
     return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
   }
 
+  let createdModelId: string | null = null;
+
   try {
     const { title, description = '', tags = '', collection_id } = req.body;
 
@@ -209,6 +211,7 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
 
     const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
     const modelId = uuidv4();
+    createdModelId = modelId;
 
     db.prepare(`
       INSERT INTO models (id, user_id, title, description, thumbnail_status)
@@ -246,20 +249,26 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
     });
   } catch (err: any) {
     console.error('[SLAG3D] Model upload failed:', err?.message || err);
-    // Clean up orphaned model record if processing failed midway
-    try {
-      const userIdForCleanup = req.session.userId || (req as any).userId;
-      if (userIdForCleanup) {
-        const orphanModel = db.prepare('SELECT id FROM models WHERE user_id = ? AND thumbnail_status = ?').all(userIdForCleanup, 'pending');
-        for (const m of orphanModel) {
-          // Best-effort cleanup of orphaned pending models
-          const dir = path.resolve(process.cwd(), 'uploads', 'models', (m as any).id);
-          try { fs.existsSync(dir) && fs.rmSync(dir, { recursive: true, force: true }); } catch {}
-          db.prepare('DELETE FROM models WHERE id = ?').run((m as any).id);
+    // Clean up ONLY the specific model record and files if processing failed midway
+    if (createdModelId) {
+      try {
+        const dir = path.resolve(process.cwd(), 'uploads', 'models', createdModelId);
+        if (fs.existsSync(dir)) {
+          fs.rmSync(dir, { recursive: true, force: true });
         }
+        db.prepare('DELETE FROM models WHERE id = ?').run(createdModelId);
+      } catch (cleanupErr) {
+        console.warn('[SLAG3D] Orphan cleanup failed:', cleanupErr);
       }
-    } catch (cleanupErr) {
-      console.warn('[SLAG3D] Orphan cleanup failed:', cleanupErr);
+    }
+    // Clean up temporary upload files from multer
+    const files = (req.files as Express.Multer.File[]) || [];
+    for (const f of files) {
+      try {
+        if (f.path && fs.existsSync(f.path)) {
+          fs.unlinkSync(f.path);
+        }
+      } catch {}
     }
     res.status(500).json({ error: 'Failed to process model upload' });
   }
@@ -545,19 +554,31 @@ router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), as
     const files = (req.files as Express.Multer.File[]) || [];
     if (!files.length) return res.status(400).json({ error: 'No files provided' });
 
-    const processedFiles = await processModelFiles(id, files);
+    const processedFiles = await processModelFiles(id, files, { isSupplementary: true });
 
-    // Recalculate primary 3D file if needed
-    const model3dFiles = processedFiles.filter(f => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
-    if (model3dFiles.length > 0) {
-      const currentPrimary: any = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id);
-      let largest: any = null;
-      for (const f of model3dFiles) {
-        if (!largest || f.file_size > largest.file_size) largest = f;
-      }
-      if (!currentPrimary || largest.file_size > currentPrimary.file_size) {
+    // Recalculate primary 3D file for the entire model
+    const new3dFiles = processedFiles.filter((f) => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
+    if (new3dFiles.length > 0) {
+      new3dFiles.sort((a, b) => b.file_size - a.file_size);
+      const largestNew = new3dFiles[0];
+
+      const currentPrimary = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id) as
+        | { id: string; file_size: number }
+        | undefined;
+
+      if (!currentPrimary || largestNew.file_size > currentPrimary.file_size) {
         db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
-        db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largest.id);
+        db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largestNew.id);
+        largestNew.is_primary_3d = 1;
+
+        // Re-queue thumbnail render for the newly designated primary 3D file
+        const primaryExt = path.extname(largestNew.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
+        const relativeOrAbs = path.resolve(process.cwd(), largestNew.file_path.replace(/^\//, ''));
+        enqueueThumbnailRender({
+          modelId: id,
+          filePath: relativeOrAbs,
+          fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+        });
       }
     }
 

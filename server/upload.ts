@@ -113,7 +113,11 @@ interface ExtractedFileInfo {
   is_primary_3d: number;
 }
 
-export async function processModelFiles(modelId: string, uploadedFiles: Express.Multer.File[]): Promise<ExtractedFileInfo[]> {
+export async function processModelFiles(
+  modelId: string,
+  uploadedFiles: Express.Multer.File[],
+  options: { isSupplementary?: boolean } = {}
+): Promise<ExtractedFileInfo[]> {
   const modelDir = path.resolve(process.cwd(), 'uploads', 'models', modelId);
   if (!fs.existsSync(modelDir)) {
     fs.mkdirSync(modelDir, { recursive: true });
@@ -232,16 +236,18 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
     }
   }
 
-  // Identify 3D files (.stl, .3mf, .obj) and designate largest as primary
-  const model3dFiles = processedFiles.filter((f) => {
-    const ext = path.extname(f.original_name).toLowerCase();
-    return ['.stl', '.3mf', '.obj'].includes(ext);
-  });
+  // Identify 3D files (.stl, .3mf, .obj) and designate largest as primary (initial upload only)
+  if (!options.isSupplementary) {
+    const model3dFiles = processedFiles.filter((f) => {
+      const ext = path.extname(f.original_name).toLowerCase();
+      return ['.stl', '.3mf', '.obj'].includes(ext);
+    });
 
-  if (model3dFiles.length > 0) {
-    // Sort descending by file_size
-    model3dFiles.sort((a, b) => b.file_size - a.file_size);
-    model3dFiles[0].is_primary_3d = 1;
+    if (model3dFiles.length > 0) {
+      // Sort descending by file_size
+      model3dFiles.sort((a, b) => b.file_size - a.file_size);
+      model3dFiles[0].is_primary_3d = 1;
+    }
   }
 
   // Insert all file records into database
@@ -254,16 +260,18 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
     insertStmt.run(pf.id, modelId, pf.filename, pf.original_name, pf.mime_type, pf.file_size, pf.file_path, pf.is_primary_3d);
   }
 
-  // Queue thumbnail render for primary 3D file
-  const primary = processedFiles.find((f) => f.is_primary_3d === 1);
-  if (primary) {
-    const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-    const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
-    enqueueThumbnailRender({
-      modelId,
-      filePath: relativeOrAbs,
-      fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
-    });
+  // Queue thumbnail render for primary 3D file (initial upload only)
+  if (!options.isSupplementary) {
+    const primary = processedFiles.find((f) => f.is_primary_3d === 1);
+    if (primary) {
+      const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
+      const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
+      enqueueThumbnailRender({
+        modelId,
+        filePath: relativeOrAbs,
+        fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+      });
+    }
   }
 
   return processedFiles;

@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, Request } from 'express';
 import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
@@ -235,10 +235,25 @@ router.post('/logout', authLogoutLimiter, (req, res) => {
   });
 });
 
+// Helper to safely extract cookie from headers without relying on cookie-parser
+function getCookie(req: Request, name: string): string | undefined {
+  const cookieHeader = req.headers.cookie;
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx > -1) {
+      const key = part.slice(0, idx).trim();
+      const val = part.slice(idx + 1).trim();
+      if (key === name) return val;
+    }
+  }
+  return undefined;
+}
+
 // GET /api/csrf-token — Endpoint to retrieve CSRF token for double-submit pattern
 router.get('/csrf-token', (req, res) => {
   // Get or generate CSRF token
-  let csrfToken = req.cookies['slag3d_csrf_token'];
+  let csrfToken = getCookie(req, 'slag3d_csrf_token');
   
   if (!csrfToken) {
     // Generate new one if missing

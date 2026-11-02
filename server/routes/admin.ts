@@ -76,28 +76,39 @@ router.put('/users/:id/reset-password', (req, res) => {
 // DELETE /api/admin/users/:id — Soft delete users to prevent data loss
 router.delete('/users/:id', (req, res) => {
   const { id } = req.params;
+  const currentAdminId = req.userId || req.session?.userId;
 
-  if (id === req.session.userId) {
+  if (id === currentAdminId) {
     return res.status(400).json({ error: 'You cannot delete your own account' });
   }
   
-  // Prevent deleting admin users or if user is sole non-deleted record in a collection
-  const deletedRows = db.prepare(`UPDATE users SET is_deleted = 1 WHERE id = ?`).run(id);
+  // Update soft-delete flag and timestamp if available
+  const userColumns = (db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>).map((c) => c.name);
+  const updateSql = userColumns.includes('deleted_at')
+    ? `UPDATE users SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`
+    : `UPDATE users SET is_deleted = 1 WHERE id = ? AND is_deleted = 0`;
+
+  const deletedRows = db.prepare(updateSql).run(id);
   
   if (deletedRows.changes === 0) {
     return res.status(404).json({ error: 'User already deleted or not found' });
   }
 
-  // Clean up orphaned data from deleted users (models/files that no longer have non-deleted owner)
+  // Invalidate any active refresh tokens for the soft-deleted user
   try {
-    // Find all models/files belonging to deleted users and archive them
+    db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+  } catch (tokenErr: any) {
+    console.warn('[ADMIN] Failed to clear auth tokens for soft-deleted user:', tokenErr?.message);
+  }
+
+  // Check orphaned models belonging to deleted user
+  try {
     const modelsToArchive = db.prepare(`
-      SELECT id, model_id FROM models WHERE user_id = ? AND (user_id NOT IN (SELECT id FROM users WHERE is_deleted = 0) OR user_id = ?)
+      SELECT id, title FROM models WHERE user_id = ?
     `).all(id);
 
-    // Optionally archive or keep orphaned data - for now just log it
     if (modelsToArchive.length > 0) {
-      console.log(`[DATA CLEANUP] ${modelsToArchive.length} models/files belong to deleted user ${id}. Data retained for recovery.`);
+      console.log(`[DATA CLEANUP] ${modelsToArchive.length} models belong to deleted user ${id}. Data retained for recovery.`);
     }
   } catch (err: any) {
     console.warn('[ADMIN] Cleanup warning:', err?.message);
