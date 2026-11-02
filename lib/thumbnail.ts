@@ -28,23 +28,22 @@ export async function renderModelThumbnail(job: RenderJobData): Promise<string> 
   const outputPath = path.resolve(outputDir, `${modelId}.png`);
   const publicThumbnailPath = `/uploads/thumbnails/${modelId}.png`;
 
-  // Determine full absolute path to the 3D file
+  // Verify 3D file exists
   const fullFilePath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
   if (!fs.existsSync(fullFilePath)) {
     throw new Error(`3D file does not exist at ${fullFilePath}`);
   }
 
-  // Read file as base64 data URI so browser can load it without network delays
-  const fileBuffer = fs.readFileSync(fullFilePath);
-  const base64Data = fileBuffer.toString('base64');
   const threeScript = getThreeBundle();
 
   // Launch Puppeteer headless browser with tested ANGLE SwiftShader WebGL flags
   const browser = await puppeteer.launch({
     headless: true,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
+      '--disable-web-security',
       '--enable-webgl',
       '--ignore-gpu-blocklist',
       '--use-gl=angle',
@@ -59,6 +58,20 @@ export async function renderModelThumbnail(job: RenderJobData): Promise<string> 
   try {
     const page = await browser.newPage();
     await page.setViewport({ width: 512, height: 512, deviceScaleFactor: 1 });
+    await page.setRequestInterception(true);
+
+    // Stream raw file directly on demand instead of inlining massive base64 strings into the HTML
+    page.on('request', (req) => {
+      if (req.url().includes('model-asset')) {
+        req.respond({
+          status: 200,
+          contentType: fileType === 'obj' ? 'text/plain' : 'application/octet-stream',
+          body: fs.readFileSync(fullFilePath),
+        });
+      } else {
+        req.continue();
+      }
+    });
 
     // HTML template implementing Three.js rendering specs with offline bundle
     const html = `
@@ -78,109 +91,100 @@ export async function renderModelThumbnail(job: RenderJobData): Promise<string> 
     window.renderReady = false;
     window.renderError = null;
 
-    try {
-      const width = 512;
-      const height = 512;
+    (async function init() {
+      try {
+        const width = 512;
+        const height = 512;
 
-      // 1. Scene & Renderer setup
-      const scene = new THREE.Scene();
-      const renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        preserveDrawingBuffer: true,
-        failIfMajorPerformanceCaveat: false,
-        powerPreference: 'high-performance'
-      });
-      renderer.setSize(width, height);
-      renderer.setPixelRatio(1);
-      renderer.setClearColor(0x121214, 1);
-      document.getElementById('container').appendChild(renderer.domElement);
+        // 1. Scene & Renderer setup
+        const scene = new THREE.Scene();
+        const renderer = new THREE.WebGLRenderer({
+          antialias: true,
+          preserveDrawingBuffer: true,
+          failIfMajorPerformanceCaveat: false,
+          powerPreference: 'high-performance'
+        });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(1);
+        renderer.setClearColor(0x121214, 1);
+        document.getElementById('container').appendChild(renderer.domElement);
 
-      // 2. Camera setup (fov: 45)
-      const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 3000);
+        // 2. Camera setup (fov: 45)
+        const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 3000);
 
-      // 3. Lighting Preset
-      // Ambient light (intensity ~0.6)
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
-      scene.add(ambientLight);
+        // 3. Lighting Preset
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
+        scene.add(ambientLight);
 
-      // Key directional light at (1, 2, 1.5) (intensity ~1.0)
-      const keyLight = new THREE.DirectionalLight(0xffffff, 1.05);
-      keyLight.position.set(1, 2, 1.5).normalize();
-      scene.add(keyLight);
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.05);
+        keyLight.position.set(1, 2, 1.5).normalize();
+        scene.add(keyLight);
 
-      // Fill directional light at (-1, -0.5, -1) (intensity ~0.3)
-      const fillLight = new THREE.DirectionalLight(0x8899bb, 0.35);
-      fillLight.position.set(-1, -0.5, -1).normalize();
-      scene.add(fillLight);
+        const fillLight = new THREE.DirectionalLight(0x8899bb, 0.35);
+        fillLight.position.set(-1, -0.5, -1).normalize();
+        scene.add(fillLight);
 
-      // 4. File Data decode
-      const b64 = "${base64Data}";
-      const byteCharacters = atob(b64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const arrayBuffer = byteArray.buffer;
+        // Material for 3D model
+        const material = new THREE.MeshStandardMaterial({
+          color: 0x3b82f6,
+          roughness: 0.35,
+          metalness: 0.25,
+        });
 
-      // Material for 3D model
-      const material = new THREE.MeshStandardMaterial({
-        color: 0x3b82f6,
-        roughness: 0.35,
-        metalness: 0.25,
-      });
+        function fitAndRender(object) {
+          scene.add(object);
 
-      function fitAndRender(object) {
-        scene.add(object);
+          // Bounding box calculation & center at (0, 0, 0)
+          const box = new THREE.Box3().setFromObject(object);
+          const center = box.getCenter(new THREE.Vector3());
+          const size = box.getSize(new THREE.Vector3());
+          
+          object.position.x += -center.x;
+          object.position.y += -center.y;
+          object.position.z += -center.z;
 
-        // Bounding box calculation & center at (0, 0, 0)
-        const box = new THREE.Box3().setFromObject(object);
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        
-        object.position.x += -center.x;
-        object.position.y += -center.y;
-        object.position.z += -center.z;
+          const maxDim = Math.max(size.x, size.y, size.z) || 10;
+          const fov = 45 * (Math.PI / 180);
+          
+          // Dynamic camera placement with 35% margin padding
+          const cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.35;
+          camera.position.set(cameraZ * 0.75, cameraZ * 0.55, cameraZ * 0.85);
+          camera.lookAt(0, 0, 0);
 
-        const maxDim = Math.max(size.x, size.y, size.z) || 10;
-        const fov = 45 * (Math.PI / 180);
-        
-        // Dynamic camera placement with 35% margin padding
-        const cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.35;
-        camera.position.set(cameraZ * 0.75, cameraZ * 0.55, cameraZ * 0.85);
-        camera.lookAt(0, 0, 0);
+          renderer.render(scene, camera);
+          window.renderReady = true;
+        }
 
-        renderer.render(scene, camera);
+        const fileType = "${fileType}";
+        if (fileType === 'stl') {
+          const res = await fetch('https://slag3d.local/model-asset');
+          const arrayBuffer = await res.arrayBuffer();
+          const loader = new THREE.STLLoader();
+          const geometry = loader.parse(arrayBuffer);
+          geometry.computeVertexNormals();
+          const mesh = new THREE.Mesh(geometry, material);
+          fitAndRender(mesh);
+        } else if (fileType === 'obj') {
+          const res = await fetch('https://slag3d.local/model-asset');
+          const text = await res.text();
+          const loader = new THREE.OBJLoader();
+          const obj = loader.parse(text);
+          obj.traverse((child) => {
+            if (child.isMesh) {
+              child.material = material;
+            }
+          });
+          fitAndRender(obj);
+        } else {
+          const geometry = new THREE.DodecahedronGeometry(20, 0);
+          const mesh = new THREE.Mesh(geometry, material);
+          fitAndRender(mesh);
+        }
+      } catch (e) {
+        window.renderError = String(e);
         window.renderReady = true;
       }
-
-      const fileType = "${fileType}";
-      if (fileType === 'stl') {
-        const loader = new THREE.STLLoader();
-        const geometry = loader.parse(arrayBuffer);
-        geometry.computeVertexNormals();
-        const mesh = new THREE.Mesh(geometry, material);
-        fitAndRender(mesh);
-      } else if (fileType === 'obj') {
-        const textDecoder = new TextDecoder();
-        const text = textDecoder.decode(arrayBuffer);
-        const loader = new THREE.OBJLoader();
-        const obj = loader.parse(text);
-        obj.traverse((child) => {
-          if (child.isMesh) {
-            child.material = material;
-          }
-        });
-        fitAndRender(obj);
-      } else {
-        const geometry = new THREE.DodecahedronGeometry(20, 0);
-        const mesh = new THREE.Mesh(geometry, material);
-        fitAndRender(mesh);
-      }
-    } catch (e) {
-      window.renderError = String(e);
-      window.renderReady = true;
-    }
+    })();
   </script>
 </body>
 </html>
