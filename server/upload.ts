@@ -48,8 +48,8 @@ function validateFile(file: Express.Multer.File): { valid: boolean; error?: Erro
     return { valid: false, error: new Error(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
   }
 
-  // Additional checks for ZIP archives with suspicious names
-  if (ext === '.zip') {
+  // Additional checks for archives (.zip, .7z) with suspicious names
+  if (ext === 'zip' || ext === '7z') {
     const lowerName = originalName.toLowerCase();
     if (SUSPICIOUS_PATTERNS.some(pattern => lowerName.includes(pattern))) {
       console.error(`[UPLOAD SECURITY] Blocked suspicious archive: ${originalName}`);

@@ -9,7 +9,7 @@ import { AdminModal } from './components/AdminModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
-import { apiFetch, getStoredToken, setStoredToken, setStoredUser, setStoredCsrfToken } from './utils/api';
+import { apiFetch, getStoredToken, setStoredToken, setStoredUser, getStoredCsrfToken, setStoredCsrfToken } from './utils/api';
 import { useVaultData } from './hooks/useVaultData';
 
 export default function App() {
@@ -48,6 +48,18 @@ export default function App() {
           const userWithId = { ...data.user, id: String(data.user?.id || '') };
           setCurrentUser(userWithId);
           setStoredUser(userWithId);
+          // Ensure double-submit CSRF token is synchronized in localStorage
+          if (!getStoredCsrfToken()) {
+            try {
+              const csrfRes = await apiFetch('/api/auth/csrf-token');
+              if (csrfRes.ok) {
+                const csrfData = await csrfRes.json();
+                if (csrfData.csrfToken) {
+                  setStoredCsrfToken(csrfData.csrfToken);
+                }
+              }
+            } catch {}
+          }
           setAuthChecked(true);
           return;
         }

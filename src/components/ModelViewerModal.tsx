@@ -29,7 +29,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { ModelFile, CollectionItem } from '../types';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getStoredToken } from '../utils/api';
 
 interface ModelDetail {
   id: string;
@@ -328,8 +328,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 
     const ext = activeFile.original_name.split('.').pop()?.toLowerCase();
 
+    const storedAuthToken = getStoredToken();
+
     if (ext === 'stl') {
       const loader = new STLLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       loader.load(
         activeFile.file_path,
         (geometry) => {
@@ -345,6 +350,9 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       );
     } else if (ext === 'obj') {
       const loader = new OBJLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       loader.load(
         activeFile.file_path,
         (obj) => {

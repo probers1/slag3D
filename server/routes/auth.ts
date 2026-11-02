@@ -84,7 +84,7 @@ router.post('/login', authLimiter, (req, res) => {
     return res.status(400).json({ error: 'Username and password are required' });
   }
 
-  const user = db.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ? COLLATE NOCASE').get(username) as
+  const user = db.prepare('SELECT id, username, password_hash, role FROM users WHERE username = ? COLLATE NOCASE AND (is_deleted = 0 OR is_deleted IS NULL)').get(username) as
     | { id: string; username: string; password_hash: string; role: 'admin' | 'user' }
     | undefined;
 
@@ -163,8 +163,8 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
       return res.status(401).json({ error: 'Refresh token not found or expired' });
     }
     
-    // Load real user data for token generation
-    user = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as { username: string; role: 'admin' | 'user' } | undefined;
+    // Load real user data for token generation (ensure user is not soft-deleted)
+    user = db.prepare('SELECT username, role FROM users WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)').get(userId) as { username: string; role: 'admin' | 'user' } | undefined;
     if (!user) {
       return res.status(401).json({ error: 'User not found' });
     }
@@ -327,7 +327,7 @@ router.get('/me', (req, res) => {
     return res.json({ user: null });
   }
 
-  const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(userId) as
+  const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)').get(userId) as
     | { id: string; username: string; role: 'admin' | 'user'; created_at: string }
     | undefined;
 

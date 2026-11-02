@@ -149,13 +149,14 @@ app.use(
 app.use(authResolverMiddleware);
 app.use(csrfProtection);
 
-// Serve uploaded files statically (auth required - uploaded 3D assets are user data)
-// Registered after authResolverMiddleware so req.userId is resolved before the check.
+// Serve uploaded files statically
+// - /uploads/thumbnails are rendered previews accessible for img tags
+// - /uploads/models (user 3D assets) require authentication via session, Bearer token, or ?token= query param
 app.use('/uploads', (req, res, next) => {
-  if (!req.userId) {
-    return res.status(401).json({ error: 'Authentication required' });
+  if (req.userId || req.path.startsWith('/thumbnails/')) {
+    return next();
   }
-  next();
+  return res.status(401).json({ error: 'Authentication required' });
 }, express.static(uploadDir));
 
 // =============================================================================

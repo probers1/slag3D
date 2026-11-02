@@ -81,6 +81,19 @@ router.delete('/users/:id', (req, res) => {
   if (id === currentAdminId) {
     return res.status(400).json({ error: 'You cannot delete your own account' });
   }
+
+  const targetUser = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as { id: string; role: string } | undefined;
+  if (!targetUser) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  // Prevent deleting the last remaining active administrator
+  if (targetUser.role === 'admin') {
+    const adminCountRow = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND (is_deleted = 0 OR is_deleted IS NULL)`).get() as { count: number };
+    if (adminCountRow.count <= 1) {
+      return res.status(400).json({ error: 'Cannot delete the last remaining administrator account' });
+    }
+  }
   
   // Update soft-delete flag and timestamp if available
   const userColumns = (db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>).map((c) => c.name);

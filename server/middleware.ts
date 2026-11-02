@@ -51,105 +51,104 @@ declare module 'express-session' {
  * from their session cookie even without a Bearer token header.
  */
 export function authResolverMiddleware(req: Request, res: Response, next: NextFunction) {
-  // Priority 1: Check Authorization header or x-auth-token (Bearer tokens for iframe/fallback scenarios)
-  const hasToken = !!req.headers.authorization || !!req.headers['x-auth-token'];
+  // Priority 1: Check Authorization header, x-auth-token, or query token
+  const authHeader = req.headers.authorization;
+  const xAuthToken = req.headers['x-auth-token'];
+  const queryToken = typeof req.query?.token === 'string' ? req.query.token : typeof req.query?.auth === 'string' ? req.query.auth : undefined;
+
+  let token: string | undefined;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.substring(7).trim();
+  } else if (typeof xAuthToken === 'string') {
+    token = xAuthToken.trim();
+  } else if (queryToken) {
+    token = queryToken.trim();
+  }
+
   let tokenResolved = false;
 
-  if (hasToken) {
-    let token: string | undefined;
-    const authHeader = req.headers.authorization;
+  if (token) {
+    // 1. Try to verify as access token first (standard JWT secret)
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & {
+        userId?: string;
+        username?: string;
+        role?: string;
+      };
 
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.substring(7).trim();
-    } else if (typeof req.headers['x-auth-token'] === 'string') {
-      token = req.headers['x-auth-token'].trim();
-    }
+      if (decoded && decoded.userId) {
+        // Verify user exists and is not soft-deleted
+        const userRow = db.prepare('SELECT username, role FROM users WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)').get(decoded.userId) as
+          | { username: string; role: 'admin' | 'user' }
+          | undefined;
 
-    if (token) {
-      try {
-        // Try to verify as access token first (standard JWT secret)
-        const decoded = jwt.verify(token, JWT_SECRET) as jwt.JwtPayload & {
-          userId?: string;
-          username?: string;
-          role?: string;
-        };
-
-        if (decoded) {
-          // Successfully verified as access token
-          console.log('[AUTH] Access token verified successfully');
-
-          // Set user fields in request for use in other middleware
+        if (userRow) {
           req.userId = decoded.userId as string;
-          req.username = decoded.username as string;
-          req.role = decoded.role as 'admin' | 'user';
+          req.username = userRow.username;
+          req.role = userRow.role;
           req.tokenType = 'access';
           tokenResolved = true;
         } else {
-          // Access token verification failed, try refresh token verification
-          try {
-            const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as unknown as { data?: string };
+          console.warn(`[AUTH] Access token rejected: user ${decoded.userId} is deleted or inactive`);
+        }
+      }
+    } catch (_accessErr: any) {
+      // 2. Access token failed (expired or different signature) - try refresh token verification
+      try {
+        const decodedRefresh = jwt.verify(token, REFRESH_TOKEN_SECRET) as unknown as { data?: string };
 
-            if (decodedRefresh.data) {
-              const [_, userId] = decodedRefresh.data.split(':');
-              if (userId) {
-                // Valid refresh token - rotate it in the background and get user info
-                console.log('[AUTH] Refresh token detected - starting rotation');
-                setRefreshTokenRotation(userId, token);
+        if (decodedRefresh && decodedRefresh.data) {
+          const [_, userId] = decodedRefresh.data.split(':');
+          if (userId) {
+            // Verify token matches stored token in auth_tokens table
+            const storedRefresh = db.prepare('SELECT token FROM auth_tokens WHERE user_id = ?').get(userId) as { token: string } | undefined;
+            if (storedRefresh && storedRefresh.token === token) {
+              const refreshUser = db.prepare('SELECT username, role FROM users WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)').get(userId) as
+                | { username: string; role: 'admin' | 'user' }
+                | undefined;
+
+              if (refreshUser) {
                 req.userId = userId;
-
-                // Load the real user record to restore username/role (e.g. admin role) after refresh
-                const refreshUser = db.prepare('SELECT username, role FROM users WHERE id = ?').get(userId) as
-                  | { username: string; role: 'admin' | 'user' }
-                  | undefined;
-                if (refreshUser) {
-                  req.username = refreshUser.username;
-                  req.role = refreshUser.role;
-                } else {
-                  req.username = 'refresh_user';
-                  req.role = 'user';
-                }
+                req.username = refreshUser.username;
+                req.role = refreshUser.role;
                 req.tokenType = 'refresh';
                 tokenResolved = true;
               }
             }
-          } catch (_refreshErr: any) {
-            // Neither access nor refresh token worked
-            console.warn('[AUTH] Token verification failed for all token types');
           }
         }
-      } catch (err: any) {
-        // Token verification failed - will fallback to session below
-        console.warn('Error verifying JWT token:', err.message);
+      } catch (_refreshErr: any) {
+        // Neither access nor refresh token worked
       }
     }
   }
 
   // Priority 2: Fallback to session cookie if token not resolved
   if (!tokenResolved && !req.path.startsWith('/api/auth')) {
-    // For same-origin requests (normal browser), the session cookie contains userId set at login.
-    const sessionUserId = req.session.userId;
+    const sessionUserId = req.session?.userId;
     if (sessionUserId) {
-      console.log('[AUTH] Using session cookie for user resolution (userId=' + sessionUserId + ')');
-      req.userId = sessionUserId;
-      // Load real user details from DB to preserve role and username for session auth
       try {
-        const user = db.prepare('SELECT username, role FROM users WHERE id = ?').get(sessionUserId) as { username: string; role: 'admin' | 'user' } | undefined;
+        const user = db.prepare('SELECT username, role FROM users WHERE id = ? AND (is_deleted = 0 OR is_deleted IS NULL)').get(sessionUserId) as
+          | { username: string; role: 'admin' | 'user' }
+          | undefined;
+
         if (user) {
+          req.userId = sessionUserId;
           req.username = user.username;
           req.role = user.role;
+          req.tokenType = 'session';
         } else {
-          // Fallback if user not found
-          req.username = 'session_user_' + sessionUserId.substring(0, 6);
-          req.role = 'user';
+          // User was deleted or does not exist: revoke session
+          console.warn(`[AUTH] Session user ${sessionUserId} not found or deleted - revoking session`);
+          req.userId = undefined;
+          if (req.session && req.session.destroy) {
+            req.session.destroy(() => {});
+          }
         }
       } catch (err) {
         console.warn('[AUTH] Failed to load user from DB for session:', err);
-        req.username = 'session_user_' + sessionUserId.substring(0, 6);
-        req.role = 'user';
+        req.userId = undefined;
       }
-      req.tokenType = 'session';
-    } else {
-      console.log(`[AUTH] No token and no session for path: ${req.path}`);
     }
   }
 

@@ -67,8 +67,8 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
   }
 
   // Attach double-submit CSRF token from localStorage if available
-  const storedCsrfToken = getStoredCsrfToken();
-  if (storedCsrfToken) {
+  let storedCsrfToken = getStoredCsrfToken();
+  if (storedCsrfToken && !headers.has('X-CSRF-Token')) {
     headers.set('X-CSRF-Token', storedCsrfToken);
   }
 
@@ -80,7 +80,22 @@ export async function apiFetch(url: string, options: RequestInit = {}): Promise<
     credentials: 'include',
   };
 
-  const response = await fetch(url, config);
+  let response = await fetch(url, config);
+
+  // If request failed with 403 CSRF error, attempt to refresh token and retry once
+  if (response.status === 403 && !url.includes('/api/auth/csrf-token')) {
+    try {
+      const csrfRes = await fetch('/api/auth/csrf-token', { credentials: 'include' });
+      if (csrfRes.ok) {
+        const csrfData = await csrfRes.json();
+        if (csrfData.csrfToken) {
+          setStoredCsrfToken(csrfData.csrfToken);
+          headers.set('X-CSRF-Token', csrfData.csrfToken);
+          response = await fetch(url, { ...options, headers, credentials: 'include' });
+        }
+      }
+    } catch {}
+  }
 
   // If unauthorized (except /api/auth/me which returns no data on error), log warning
   if (response.status === 401 && !url.includes('/api/auth/me')) {
