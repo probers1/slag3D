@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/smoke.test.ts && tsx tests/priority1_fixes.test.ts && tsx tests/priority2_fixes.test.ts"
+    "test": "tsx tests/smoke.test.ts && tsx tests/priority1_fixes.test.ts && tsx tests/priority2_fixes.test.ts && tsx tests/priority3_fixes.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

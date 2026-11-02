@@ -15,11 +15,11 @@ type MigrationFunc = (db: Database.Database) => { version: number; timestamp: st
  */
 function getCurrentVersion(db: Database.Database): number {
   try {
+    if (!hasSchemaTable(db)) return 0;
     const row = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`)
       .get() as { version: number } | null;
     return row?.version || 0;
   } catch (error) {
-    console.error('[MIGRATIONS] Error getting current version:', error);
     return 0;
   }
 }
@@ -77,18 +77,11 @@ export function runMigrations(db: Database.Database): { applied: number[]; skipp
   ];
 
   for (const { version, func } of migrations) {
-    // Check if already applied by looking up this specific version
-    try {
-      const existing = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`)
-        .get() as { version?: number } | null;
-
-      if (existing && existing.version === version) {
-        console.log(`[MIGRATIONS] Skipping migration v${version} (already applied)`);
-        skipped.push(version);
-        continue;
-      }
-    } catch (err: any) {
-      errors[version] = err;
+    // Check if already applied (current database schema version >= this migration version)
+    const currentVer = getCurrentVersion(db);
+    if (currentVer >= version) {
+      console.log(`[MIGRATIONS] Skipping migration v${version} (already applied, current version: ${currentVer})`);
+      skipped.push(version);
       continue;
     }
 
@@ -113,6 +106,7 @@ export function runMigrations(db: Database.Database): { applied: number[]; skipp
     } catch (err: any) {
       console.error(`[Migration v${version}] Error:`, err?.message || err);
       errors[version] = err;
+      break;
     }
   }
 

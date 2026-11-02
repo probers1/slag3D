@@ -97,11 +97,13 @@ if (isPlaceholder(refreshTokenSecret)) {
 
 console.log('[SLAG3D SECURITY] Security validation passed - JWT_SECRET, REFRESH_TOKEN_SECRET & SESSION_SECRET properly configured');
 
-// Initialize DB schema & seed admin (admin seeded when GOOSE_SEED_DB=true)
-initDatabase().catch((err) => {
+// Initialize DB schema & run pending migrations before accepting connections
+try {
+  await initDatabase();
+} catch (err) {
   console.error('[SLAG3D] Database initialization failed:', err);
   process.exit(1);
-});
+}
 
 const app = express();
 const PORT = 3000;

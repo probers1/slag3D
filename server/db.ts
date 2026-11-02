@@ -54,30 +54,47 @@ export function hasMigrationTable(): boolean {
 }
 
 /**
- * Initialize database for first-time setup in dev/seed mode only
+ * Seed default administrator user if requested and no users exist
+ */
+export function seedAdminIfRequested(): void {
+  try {
+    const countRow = db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number } | undefined;
+    if (countRow?.count === 0 && process.env.GOOSE_SEED_DB === 'true') {
+      const salt = bcrypt.genSaltSync(10);
+      const hash = bcrypt.hashSync('admin123', salt);
+      const insert = db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')`);
+      insert.run(uuidv4(), 'admin', hash);
+      console.log('[SLAG3D] Created default admin user (admin / admin123)');
+    }
+  } catch (seedErr: any) {
+    console.warn('[SLAG3D] Admin seeding check error:', seedErr?.message);
+  }
+}
+
+/**
+ * Initialize database and execute any pending migrations
  */
 export async function initDatabase(): Promise<void> {
-  if (hasMigrationTable()) {
-    // Already initialized
-    return;
+  const currentVersion = getCurrentVersion();
+  console.log(`[DATABASE] Checking database schema (current version: ${currentVersion >= 0 ? currentVersion : 'uninitialized'})...`);
+
+  // Ensure schema_versions table exists with version tracking
+  if (!hasMigrationTable()) {
+    console.log('[MIGRATIONS] Creating schema_versions table for setup...');
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS schema_versions (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        version INTEGER NOT NULL UNIQUE,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
   }
 
-  console.log('[MIGRATIONS] Initializing database for first-time setup...');
-
-  // Create schema_versions table with VERSION tracking
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_versions (
-      id INTEGER PRIMARY KEY CHECK(id = 1),
-      version INTEGER NOT NULL UNIQUE,
-      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
-
   try {
-    // Import and run migrations via single unified entrypoint
-    const migrationsModule = await import('./migrations/index');
+    // Import and run migrations via unified entrypoint
+    const migrationsModule = await import('./migrations/index.ts');
     if (migrationsModule?.runMigrations) {
-      console.log('[MIGRATIONS] Running migration system (v1/v2)...');
+      console.log('[MIGRATIONS] Checking and executing pending migrations...');
       const result = migrationsModule.runMigrations(db);
       
       // Fail fast if any migrations encountered errors
@@ -86,37 +103,21 @@ export async function initDatabase(): Promise<void> {
         throw new Error('Migration errors: ' + JSON.stringify(result.errors));
       }
       
-      console.log('[MIGRATIONS] Completed successfully\n');
+      console.log('[MIGRATIONS] Completed migration check successfully\n');
     } else {
-      // Migration entrypoint not found - use fallback for recovery
-      console.error('[MIGRATIONS] WARNING: migrations/index.js entry point missing, using fallback');
+      console.error('[MIGRATIONS] WARNING: migrations/index entry point missing, using fallback');
       applyFallbackTables();
     }
   } catch (err: any) {
     if (err.message?.includes('Migration errors')) {
-      // Already logged in the try block above
-      throw err; // Re-throw to fail setup
+      throw err;
     }
     console.error('[MIGRATIONS] Unexpected error during migration:', err?.message);
-    
-    // Fall back to basic table creation if migrations failed unexpectedly
     applyFallbackTables();
   }
 
-  // Try v2 upgrade path if current version is < 2
-  const currentVersion = getCurrentVersion();
-  if (currentVersion >= 0 && currentVersion < 2) {
-    try {
-      const m2 = await import('./migrations/002_add_metadata_columns.js');
-      if (m2?.v2_add_metadata_columns) {
-        m2.v2_add_metadata_columns(db);
-        console.log('[MIGRATIONS] Applied v2 upgrade\n');
-      }
-    } catch (err: any) {
-      console.warn('[MIGRATIONS] v2 upgrade skipped:', err?.message);
-    }
-  }
-
+  // Seed default admin user if GOOSE_SEED_DB=true and no users exist
+  seedAdminIfRequested();
 }
 
 /**
@@ -132,13 +133,15 @@ function applyFallbackTables(): void {
     );
   `);
 
-  // Create all base tables
+  // Create all base tables with complete schema
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+      is_deleted INTEGER NOT NULL DEFAULT 0,
+      deleted_at TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -195,6 +198,7 @@ function applyFallbackTables(): void {
       user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       name TEXT NOT NULL,
       description TEXT DEFAULT '',
+      parent_folder_id TEXT REFERENCES collections(id) ON DELETE CASCADE,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -219,25 +223,18 @@ function applyFallbackTables(): void {
     CREATE INDEX IF NOT EXISTS idx_models_title ON models(title);
     CREATE INDEX IF NOT EXISTS idx_files_model_id ON files(model_id);
     CREATE INDEX IF NOT EXISTS idx_collections_user_id ON collections(user_id);
+    CREATE INDEX IF NOT EXISTS idx_collections_parent ON collections(parent_folder_id);
   `);
 
-  // Seed admin user if GOOSE_SEED_DB and no users exist
-  const countRow = db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number };
-  if (countRow?.count === 0 && process.env.GOOSE_SEED_DB === 'true') {
-    const salt = bcrypt.genSaltSync(10);
-    const hash = bcrypt.hashSync('admin123', salt);
-    const insert = db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')`);
-    insert.run(uuidv4(), 'admin', hash);
-    console.log('[MIGRATIONS] Created default admin user');
-  }
-
-  // Record version
+  // Record latest schema version
   const currentVersionRow = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`).get() as { version?: number } | null;
   if (!currentVersionRow) {
-    db.prepare(`INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)`).run(1, new Date().toISOString());
+    db.prepare(`INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)`).run(4, new Date().toISOString());
+  } else {
+    db.prepare(`UPDATE schema_versions SET version = 4, applied_at = ? WHERE id = 1`).run(new Date().toISOString());
   }
 
-  console.log('[MIGRATIONS] Tables created\n');
+  console.log('[MIGRATIONS] Fallback tables created with full schema (v4)\n');
 }
 
 // Validate session secret for session cookie signing
