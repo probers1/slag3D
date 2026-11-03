@@ -252,7 +252,7 @@ deploy_application() {
     if [ ! -d "${APP_DIR}/node_modules" ]; then
         # Approve missing install scripts for native modules and build tools
         log_info "Approving install scripts for native modules..."
-        npm install-scripts approve better-sqlite3 esbuild puppeteer sqlite3 2>/dev/null || true
+        npm install-scripts approve better-sqlite3 puppeteer sqlite3
         
         log_info "Installing Node.js dependencies (including native better-sqlite3)..."
         npm install --omit=dev || npm install
@@ -261,10 +261,10 @@ deploy_application() {
         log_info "Dependencies already installed - skipping npm install"
         
         # Ensure sqlite3 package is still installed (required by connect-sqlite3)
-        log_info "Ensuring sqlite3 package is installed..."
-        if ! npm list sqlite3 >/dev/null 2>&1; then
-            npm install sqlite3@5.1.7
-        fi
+        #log_info "Ensuring sqlite3 package is installed..."
+        #if ! npm list sqlite3 >/dev/null 2>&1; then
+        #    npm install sqlite3@5.1.7
+        #fi
     fi
 
     log_info "Building production frontend assets..."
