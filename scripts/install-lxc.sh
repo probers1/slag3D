@@ -259,15 +259,22 @@ deploy_application() {
     if [ ! -d "${APP_DIR}/node_modules" ]; then
         log_info "Installing Node.js dependencies (including native better-sqlite3)..."
         npm install --omit=dev || npm install
-    else
-        log_info "Dependencies already installed - skipping npm install"
+
+        # Approve missing install scripts for native modules and build tools
+        log_info "Approving install scripts for native modules..."
+        npm install-scripts approve better-sqlite3 esbuild puppeteer sqlite3 2>/dev/null || true
     fi
 
     log_info "Building production frontend assets..."
-    NODE_PATH="${APP_DIR}/node_modules/.bin:"
-    # Set PATH for vite
-    APP_DIR_BASH="${APP_DIR}"
-    PATH="${APP_DIR_BASH}/*/node_modules/.bin:${PATH}"
+    
+    # Add Node.js bin directories to PATH (npm, vite, etc.)
+    if [ -d "${APP_DIR}/node_modules/.bin" ]; then
+        export PATH="${APP_DIR}/node_modules/.bin:$PATH"
+    fi
+    
+    # Ensure we're in the app directory before running npm
+    cd "${APP_DIR}" || exit 1
+    
     npm run build || {
         log_error "Build failed! Check npm errors above."
         exit 1
