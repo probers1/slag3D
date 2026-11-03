@@ -256,6 +256,11 @@ deploy_application() {
         # Approve missing install scripts for native modules and build tools
         log_info "Approving install scripts for native modules..."
         npm install-scripts approve better-sqlite3 esbuild puppeteer sqlite3 2>/dev/null || true
+    
+    # Ensure sqlite3 package is installed (required by connect-sqlite3 for sessions)
+    log_info "Ensuring sqlite3 package is installed..."
+    if ! npm list sqlite3 >/dev/null 2>&1; then
+        npm install sqlite3@5.1.7
     fi
 
     log_info "Building production frontend assets..."
@@ -455,7 +460,7 @@ main() {
     echo ""
 
     check_prerequisites
-    configure_persistent_volumes
+    #configure_persistent_volumes
     install_dependencies
     install_nodejs
     setup_configuration

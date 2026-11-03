@@ -26,8 +26,10 @@
     "node-stream-zip": "^1.16.0",
     "p-queue": "^10.0.0",
     "puppeteer": "^25.16.0",
+    "sqlite3": "5.1.7",
     "three": "^0.186.1",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "vite": "^8.3.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
