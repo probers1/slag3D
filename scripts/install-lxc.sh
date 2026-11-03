@@ -266,6 +266,8 @@ build_application() {
     npm install --omit=dev --prefer-offline || npm install
 
     log_info "Building production frontend assets..."
+    cd "${APP_DIR}/"
+    NODE_PATH="${APP_DIR}/node_modules/.bin:"
     npm run build || {
         log_error "Build failed! Check npm errors above."
         exit 1
