@@ -52,39 +52,81 @@ check_prerequisites() {
     fi
 }
 
-# 2. Configure systemd for auto-mounting persistent volumes
-#configure_persistent_volumes() {
-#    log_info "Configuring persistent storage..."
-#
-#    # Create mount units if they don't exist
-#    cat <<'EOF' > /etc/systemd/system/data.mount
-#[Unit]
-#Description=Mount SLAG3D Data Directory
-#After=local-fs.target
-#
-#[Mount]
-#What=/dev/disk/by-id/uuid-PLACEHOLDER
-#Where=${DATA_DIR}
-#Type=ext4
-#Options=defaults,noatime
-#EOF
-#
-#    cat <<'EOF' > /etc/systemd/system/uploads.mount
-#[Unit]
-#Description=Mount SLAG3D Uploads Directory
-#After=local-fs.target
-#
-#[Mount]
-#What=/dev/disk/by-id/uuid-PLACEHOLDER
-#Where=${UPLOADS_DIR}
-#Type=ext4
-#Options=defaults,noatime
-#EOF
-#
-#    log_info "Note: Update mount units with actual UUIDs if your /data and /uploads use different partitions."
-#    log_info "  Run: lsblk -o NAME,UUID,FSTYPE"
-#}
-#
+# 2. Install Node.js v22 LTS (upgrade from v20 if detected)
+install_nodejs() {
+    log_info "Checking and installing Node.js v22 LTS..."
+
+    # Get current node version
+    local CURRENT_VERSION=""
+    if command -v node >/dev/null 2>&1; then
+        CURRENT_VERSION=$(node -v | cut -d'.' -f1)
+        if [[ "$CURRENT_VERSION" == "v18"* || "$CURRENT_VERSION" == "v17"* || "$CURRENT_VERSION" == "v16"* ]]; then
+            # Old version detected, force upgrade to v22
+            log_warn "Detected Node.js ${CURRENT_VERSION} - upgrading to v22 LTS (required)"
+        fi
+    fi
+
+    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
+        log_info "Setting up NodeSource repository for Node.js v22 LTS..."
+        
+        # Add NodeSource GPG key (deb.nodesource.com uses sha256)
+        mkdir -p /etc/apt/keyrings
+        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+        
+        # Add NodeSource repository
+        NODE_VERSION="node_22.x"
+        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_VERSION} nodistro main" \
+          | tee /etc/apt/sources.list.d/nodesource.list
+
+        apt-get update -y
+        apt-get install -y nodejs
+    fi
+
+    # Verify Node.js installation
+    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
+        log_success "Node.js installed successfully: $(node -v)"
+    else
+        log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
+        return 1
+    fi
+
+    echo "Node version: $(node -v)"
+    echo "npm version:  $(npm -v)"
+}
+
+# 4. Configure systemd for auto-mounting persistent volumes
+configure_persistent_volumes() {
+    log_info "Configuring persistent storage..."
+
+    # Create mount units if they don't exist
+    cat <<'EOF' > /etc/systemd/system/data.mount
+[Unit]
+Description=Mount SLAG3D Data Directory
+After=local-fs.target
+
+[Mount]
+What=/dev/disk/by-id/uuid-PLACEHOLDER
+Where=${DATA_DIR}
+Type=ext4
+Options=defaults,noatime
+EOF
+
+    cat <<'EOF' > /etc/systemd/system/uploads.mount
+[Unit]
+Description=Mount SLAG3D Uploads Directory
+After=local-fs.target
+
+[Mount]
+What=/dev/disk/by-id/uuid-PLACEHOLDER
+Where=${UPLOADS_DIR}
+Type=ext4
+Options=defaults,noatime
+EOF
+
+    log_info "Note: Update mount units with actual UUIDs if your /data and /uploads use different partitions."
+    log_info "  Run: lsblk -o NAME,UUID,FSTYPE"
+}
+
 # 3. Install system dependencies
 install_dependencies() {
     log_info "Updating apt package repositories..."
@@ -99,53 +141,11 @@ install_dependencies() {
       libxrandr2 libpango-1.0-0 libcairo2 dnsutils
 }
 
-# 4. Install Node.js v22 LTS (upgrade from v20 if detected)
-#install_nodejs() {
-#    log_info "Checking and installing Node.js v22 LTS..."
-#
-#    # Get current node version
-#    local CURRENT_VERSION=""
-#    if command -v node >/dev/null 2>&1; then
-#        CURRENT_VERSION=$(node -v | cut -d'.' -f1)
-#        if [[ "$CURRENT_VERSION" == "v18"* || "$CURRENT_VERSION" == "v17"* || "$CURRENT_VERSION" == "v16"* ]]; then
-#            # Old version detected, force upgrade to v22
-#            log_warn "Detected Node.js ${CURRENT_VERSION} - upgrading to v22 LTS (required)"
-#        fi
-#    fi
-#
-#    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
-#        log_info "Setting up NodeSource repository for Node.js v22 LTS..."
-#        
-#        # Add NodeSource GPG key (deb.nodesource.com uses sha256)
-#        mkdir -p /etc/apt/keyrings
-#        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-#        
-#        # Add NodeSource repository
-#        NODE_VERSION="node_22.x"
-#        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_VERSION} nodistro main" \
-#          | tee /etc/apt/sources.list.d/nodesource.list
-#
-#        apt-get update -y
-#        apt-get install -y nodejs
-#    fi
-#
-#    # Verify Node.js installation
-#    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
-#        log_success "Node.js installed successfully: $(node -v)"
-#    else
-#        log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
-#        return 1
-#    fi
-#
-#    echo "Node version: $(node -v)"
-#    echo "npm version:  $(npm -v)"
-#}
-#
 # 5. Setup configuration and secrets
 setup_configuration() {
     local APP_DIR="${APP_DIR:-/opt/slag3D}"
-    local DATA_DIR="${DATA_DIR:-/data}"
-    local UPLOADS_DIR="${UPLOADS_DIR:-/uploads}"
+    local DATA_DIR="${DATA_DIR:-${APP_DIR}/data}"
+    local UPLOADS_DIR="${UPLOADS_DIR:-${APP_DIR}/uploads}"
 
     log_info "Setting up application configuration..."
 
@@ -212,9 +212,9 @@ USERNAME=admin
 PASSWORD=${ADMIN_PASSWORD}
 # ==================================
 ⚠️  IMPORTANT WARNINGS:
-   1. Change this password IMMEDIATELY after first login
-   2. Store this file SECURELY (chmod 600)
-   3. After changing credentials, you can delete this file
+    1. Change this password IMMEDIATELY after first login
+    2. Store this file SECURELY (chmod 600)
+    3. After changing credentials, you can delete this file
 EOF
 chmod 600 /tmp/slag3d-admin-password.txt
             
@@ -238,68 +238,65 @@ chmod 600 /tmp/slag3d-admin-password.txt
     generate_secrets
 }
 
-# 6. Deploy application files
+# 6. Deploy application files (npm install + build)
 deploy_application() {
     local APP_DIR="${APP_DIR:-/opt/slag3D}"
     
-    log_info "Deploying application files to ${APP_DIR}..."
+    log_info "Deploying application to ${APP_DIR}..."
 
-    # Create app directory structure
-    mkdir -p "${APP_DIR}" "${DATA_DIR}" "${UPLOADS_DIR}"
-    # Copy app files from current location (when running inside container)
-    if [ -f "./package.json" ]; then
-        log_info "Copying application source to ${APP_DIR}..."
-        
-        # Normalize APP_DIR path and check if we are already inside it
-        APP_DIR_NORM=$(echo "${APP_DIR}" | sed 's|/++||')
-        if [[ "$PWD" == "$APP_DIR_NORM"* ]]; then
-            log_info "Already in ${APP_DIR} - running rebuild, no copy needed."
-            return 0
-        fi
-        
-        # Ensure APP_DIR is an absolute path
-        if [ "${APP_DIR}" != /* ]; then
-            APP_DIR="/opt/slag3d${APP_DIR#/}"
-        fi
-        
-        cp -rL . "${APP_DIR}/"
-        cd "${APP_DIR}"
-    else
-        if [ ! -f "${APP_DIR}/package.json" ]; then
-            log_warn "No package.json found at current location and /opt/slag3D lacks source."
-            log_info "Manual installation required:"
-            echo "  cd ${APP_DIR}"
-            echo "  npm install"
-            echo "  cp .env.example .env"
-            echo "  npm run build && npm start"
-            return 1
-        fi
+    # Check if repository is already present (user cloned manually)
+    if [ ! -f "${APP_DIR}/package.json" ]; then
+        log_warn "Repository not found at ${APP_DIR}. Expected manual git clone."
+        echo "  Run: cd ${APP_DIR} && git pull"
+        log_error "Cannot continue without repository. Exiting."
+        exit 1
     fi
 
-    cd "${APP_DIR}"
-}
+    log_info "Repository existing - skipping git clone step..."
 
-# 7. Install application dependencies and build
-build_application() {
-    log_info "Installing Node.js dependencies (including native better-sqlite3)..."
-    
-    # Use --omit=optional for smaller footprint since most deps come from package.json
-    npm install --omit=dev --prefer-offline || npm install
+    # Check if node_modules exists (fresh install or update needed)
+    if [ ! -d "${APP_DIR}/node_modules" ]; then
+        log_info "Installing Node.js dependencies (including native better-sqlite3)..."
+        npm install --omit=dev || npm install
+    else
+        log_info "Dependencies already installed - skipping npm install"
+    fi
 
     log_info "Building production frontend assets..."
-    cd "${APP_DIR}/"
     NODE_PATH="${APP_DIR}/node_modules/.bin:"
     # Set PATH for vite
-    PATH="${APP_DIR}/*/node_modules.*bin:${PATH}"
+    APP_DIR_BASH="${APP_DIR}"
+    PATH="${APP_DIR_BASH}/*/node_modules/.bin:${PATH}"
     npm run build || {
         log_error "Build failed! Check npm errors above."
         exit 1
     }
 
-    log_success "Application built successfully"
+    # Create .gitignore files for data and uploads directories (outside git tracking)
+    log_info "Creating .gitignore exclusions..."
+    
+    cat > "${DATA_DIR}/.gitignore" <<'EOF'
+# SLAG3D Data Directory - Excluded from version control
+vault.db
+vault.db-wal
+vault.db-shm
+EOF
+
+    cat > "${UPLOADS_DIR}/.gitignore" <<'EOF'
+# SLAG3D Uploads Directory - Excluded from version control
+/*.*
+*.png
+*.jpg
+*.jpeg
+*cache*
+EOF
+
+    log_success ".gitignore exclusions created in data and uploads directories"
+
+    log_success "Application deployed successfully"
 }
 
-# 8. Configure systemd service
+# 7. Configure systemd service
 create_systemd_service() {
     local APP_DIR="${APP_DIR:-/opt/slag3D}"
     local SERVICE_FILE="/etc/systemd/system/slag3D.service"
@@ -343,7 +340,7 @@ EOF
     log_success "Service file created at ${SERVICE_FILE}"
 }
 
-# 9. Start and verify services
+# 8. Start and verify services
 start_systemd_service() {
     log_info "Configuring and restarting systemd service..."
 
@@ -375,7 +372,7 @@ start_systemd_service() {
     fi
 }
 
-# 10. Verification and summary
+# 9. Verification and summary
 verify_and_report() {
     local APP_DIR="${APP_DIR:-/opt/slag3D}"
     
@@ -447,8 +444,8 @@ main() {
     
     # Configuration constants
     APP_DIR="${APP_DIR:-/opt/slag3D}"
-    DATA_DIR="${DATA_DIR:-/data}"
-    UPLOADS_DIR="${UPLOADS_DIR:-/uploads}"
+    DATA_DIR="${DATA_DIR:-${APP_DIR}/data}"
+    UPLOADS_DIR="${UPLOADS_DIR:-${APP_DIR}/uploads}"
 
     log_info "Configuration:"
     echo "  App DIR:   ${APP_DIR}"
@@ -457,12 +454,11 @@ main() {
     echo ""
 
     check_prerequisites
-    #configure_persistent_volumes
-    #install_dependencies
-    #install_nodejs
+    configure_persistent_volumes
+    install_dependencies
+    install_nodejs
     setup_configuration
     deploy_application
-    build_application
     create_systemd_service
     start_systemd_service
     verify_and_report
