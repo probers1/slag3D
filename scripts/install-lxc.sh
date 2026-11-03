@@ -66,7 +66,7 @@ install_nodejs() {
         fi
     fi
 
-    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
+    if ! command -v node >/dev/null 2>&1; then
         log_info "Setting up NodeSource repository for Node.js v22 LTS..."
         
         # Add NodeSource GPG key (deb.nodesource.com uses sha256)
@@ -82,8 +82,9 @@ install_nodejs() {
         apt-get install -y nodejs
     fi
 
-    # Verify Node.js installation
-    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
+    # Verify Node.js installation with flexible version check
+    local NODE_OUTPUT=$(command -v node >/dev/null 2>&1 && node --version)
+    if [[ "$NODE_OUTPUT" =~ v22 ]]; then
         log_success "Node.js installed successfully: $(node -v)"
     else
         log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
