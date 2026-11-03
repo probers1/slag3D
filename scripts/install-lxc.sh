@@ -33,7 +33,7 @@ check_prerequisites() {
     # Check root privileges
     if [ "$(id -u)" -ne 0 ]; then
         log_error "ERROR: This script must be run as root inside the Debian LXC container."
-        echo "Run with: sudo /opt/slag3d/scripts/install-lxc.sh"
+        echo "Run with: sudo /opt/slag3D/scripts/install-lxc.sh"
         exit 1
     fi
 
@@ -133,7 +133,7 @@ install_nodejs() {
 
 # 5. Setup configuration and secrets
 setup_configuration() {
-    local APP_DIR="${APP_DIR:-/opt/slag3d}"
+    local APP_DIR="${APP_DIR:-/opt/slag3D}"
     local DATA_DIR="${DATA_DIR:-/data}"
     local UPLOADS_DIR="${UPLOADS_DIR:-/uploads}"
 
@@ -141,7 +141,7 @@ setup_configuration() {
 
     # 5a. Check and migrate existing database if needed
     migrate_existing_database() {
-        local OLD_DB_PATH="/opt/slag3d/data/vault.db"
+        local OLD_DB_PATH="/opt/slag3dDdata/vault.db"
         local NEW_DB_PATH="${DATA_DIR}/vault.db"
 
         # Create WAL mode for durability
@@ -209,7 +209,7 @@ EOF
 
 # 6. Deploy application files
 deploy_application() {
-    local APP_DIR="${APP_DIR:-/opt/slag3d}"
+    local APP_DIR="${APP_DIR:-/opt/slag3D}"
     
     log_info "Deploying application files to ${APP_DIR}..."
 
@@ -218,14 +218,14 @@ deploy_application() {
 
     # Copy app files from current location (when running inside container)
     if [ -f "./package.json" ]; then
-        log_info "Copying application source to /opt/slag3d..."
+        log_info "Copying application source to /opt/slag3D..."
         cp -r . "${APP_DIR}/"
         
         cd "${APP_DIR}"
     else
         # Try alternative sources or provide instructions for manual setup
         if [ ! -f "${APP_DIR}/package.json" ]; then
-            log_warn "No package.json found at current location and /opt/slag3d lacks source."
+            log_warn "No package.json found at current location and /opt/slag3D lacks source."
             log_info "Manual installation required:"
             echo "  cd ${APP_DIR}"
             echo "  npm install"
@@ -256,8 +256,8 @@ build_application() {
 
 # 8. Configure systemd service
 create_systemd_service() {
-    local APP_DIR="${APP_DIR:-/opt/slag3d}"
-    local SERVICE_FILE="/etc/systemd/system/slag3d.service"
+    local APP_DIR="${APP_DIR:-/opt/slag3D}"
+    local SERVICE_FILE="/etc/systemd/system/slag3D.service"
 
     log_info "Registering systemd service..."
 
@@ -305,40 +305,40 @@ start_systemd_service() {
     systemctl daemon-reload
 
     # Check if service already exists (for upgrades)
-    if ! systemctl list-unit-files | grep -q slag3d.service; then
-        systemctl enable slag3d.service
+    if ! systemctl list-unit-files | grep -q slag3D.service; then
+        systemctl enable slag3D.service
     fi
 
     log_info "Restarting SLAG3D service..."
-    systemctl restart slag3d.service
+    systemctl restart slag3D.service
 
     # Wait for startup and basic health check
     sleep 2
 
     # Verify service is active
-    if systemctl is-active --quiet slag3d.service; then
+    if systemctl is-active --quiet slag3D.service; then
         log_success "SLAG3D service is running"
         
         # Display service status
         echo ""
-        systemd-cgls slag3d.service 2>/dev/null || true
+        systemd-cgls slag3D.service 2>/dev/null || true
     else
         log_error "Failed to start service. Check logs:"
-        journalctl -u slag3d.service -n 20 --no-pager
+        journalctl -u slag3D.service -n 20 --no-pager
         exit 1
     fi
 }
 
 # 10. Verification and summary
 verify_and_report() {
-    local APP_DIR="${APP_DIR:-/opt/slag3d}"
+    local APP_DIR="${APP_DIR:-/opt/slag3D}"
     
     echo ""
     log_info "Running verification checks..."
     echo ""
 
     # Check service status
-    systemctl is-active slag3d.service && \
+    systemctl is-active slag3D.service && \
         echo -e "${GREEN}✓${NC} Service is running" || \
         echo -e "${RED}✗${NC} Service is NOT running"
 
@@ -377,9 +377,9 @@ verify_and_report() {
     log_success "=========================================="
     echo ""
     echo "Quick Commands:"
-    echo "  Status:    systemctl status slag3d.service"
-    echo "  Logs:      journalctl -u slag3d.service -f"
-    echo "  Restart:   systemctl restart slag3d.service"
+    echo "  Status:    systemctl status slag3D.service"
+    echo "  Logs:      journalctl -u slag3D.service -f"
+    echo "  Restart:   systemctl restart slag3D.service"
     echo ""
     echo "Access the dashboard:"
     echo "  URL:       http://\$(hostname -I | awk '{print \$1}'):3000"
@@ -400,7 +400,7 @@ main() {
     print_header
     
     # Configuration constants
-    APP_DIR="${APP_DIR:-/opt/slag3d}"
+    APP_DIR="${APP_DIR:-/opt/slag3D}"
     DATA_DIR="${DATA_DIR:-/data}"
     UPLOADS_DIR="${UPLOADS_DIR:-/uploads}"
 
@@ -423,16 +423,16 @@ main() {
 
     log_success "To update SLAG3D in the future, add this to your container rebuild script:"
     echo ""
-    echo '  /opt/slag3d/scripts/install-lxc.sh --update'
+    echo '  /opt/slag3D/scripts/install-lxc.sh --update'
     echo ""
 }
 
 # Handle --update flag for seamless updates during container rebuilds
-if [ "${1:-}" = "--update" ] && [ -f "/opt/slag3d/package.json" ]; then
+if [ "${1:-}" = "--update" ] && [ -f "/opt/slag3D/package.json" ]; then
     log_info "Updating existing SLAG3D installation..."
-    APP_DIR="/opt/slag3d" npm install
+    APP_DIR="/opt/slag3D" npm install
     cd "${APP_DIR}" && git pull 2>/dev/null || true && npm run build
-    systemctl restart slag3d.service
+    systemctl restart slag3D.service
     log_success "Update complete. Service restarted."
     exit 0
 fi
