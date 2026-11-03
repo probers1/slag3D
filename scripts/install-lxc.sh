@@ -103,15 +103,15 @@ install_dependencies() {
 install_nodejs() {
     log_info "Installing Node.js v20 LTS..."
 
-    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v20" ]; then
-        log_info "Setting up NodeSource repository for Node.js v20 LTS..."
+    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
+        log_info "Setting up NodeSource repository for Node.js v22 LTS..."
         
         # Add NodeSource GPG key (deb.nodesource.com uses sha256)
         mkdir -p /etc/apt/keyrings
         curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
         
         # Add NodeSource repository
-        NODE_VERSION="node_20.x"
+        NODE_VERSION="node_22.x"
         echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_VERSION} nodistro main" \
           | tee /etc/apt/sources.list.d/nodesource.list
 
@@ -120,7 +120,7 @@ install_nodejs() {
     fi
 
     # Verify Node.js installation
-    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v20.x.x" ]; then
+    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
         log_success "Node.js installed successfully: $(node -v)"
     else
         log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
