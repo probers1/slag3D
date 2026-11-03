@@ -252,7 +252,7 @@ deploy_application() {
     if [ ! -d "${APP_DIR}/node_modules" ]; then
         # Approve missing install scripts for native modules and build tools
         log_info "Approving install scripts for native modules..."
-        npm install-scripts approve better-sqlite3 esbuild puppeteer sqlite3
+        npm install-scripts approve better-sqlite3 puppeteer sqlite3
         
         log_info "Installing Node.js dependencies (including native better-sqlite3)..."
         npm install --omit=dev || npm install
