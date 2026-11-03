@@ -290,6 +290,7 @@ TimeoutStopSec=30
 # Environment configuration
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=PUPPETEER_FORCE_CHROMIUM_PATH=/usr/bin/chromium
 Environment=PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 # Security hardening limits
