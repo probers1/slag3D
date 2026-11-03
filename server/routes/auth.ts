@@ -3,7 +3,7 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
 import { requireAuth, JWT_SECRET, REFRESH_TOKEN_SECRET } from '../middleware.ts';
-import jwt, { JwtPayload, SignOptions } from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { validatePasswordStrength } from '../lib/passwordValidation.ts';

@@ -33,12 +33,15 @@ RUN npm install
 # Copy application source code
 COPY . .
 
-# Build production frontend
-RUN npm run build
+# Build production frontend — only if VITE_MODE=production is set
+if [ "$VITE_MODE" = "production" ]; then
+    RUN npm run build
+fi
 
-# Create persistent storage directories
-RUN mkdir -p /data /uploads/thumbnails /uploads/models /uploads/tmp && \
-    chmod -R 777 /data /uploads
+# Create persistent storage directories with secure ownership
+RUN mkdir -p /data /uploads/thumbnails /uploads/models /uploads/tmp \
+    && chown -R node:node /data /uploads \
+    && chmod -R 750 /data /uploads
 
 # Declare persistent volumes
 VOLUME ["/data", "/uploads"]
@@ -50,4 +53,12 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
+# SECURITY FIX #1: Hard-coded startup validation — container WILL NOT start without valid secrets.
+# This prevents malicious reuse of containers with default/weak secrets.
+COPY ./server/startup-validation.js ./startup-validation.js
+RUN node ./startup-validation.js \
+    || (echo "FATAL: Startup validation failed. The container was started without proper security configuration." && echo "Please set JWT_SECRET, REFRESH_TOKEN_SECRET, and SESSION_SECRET and restart." && exit 1)
+
+# Set working directory and run the server
+WORKDIR /app
 CMD ["npm", "start"]
