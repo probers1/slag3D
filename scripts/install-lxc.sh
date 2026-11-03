@@ -225,15 +225,25 @@ deploy_application() {
 
     # Create app directory structure
     mkdir -p "${APP_DIR}" "${DATA_DIR}" "${UPLOADS_DIR}"
-
     # Copy app files from current location (when running inside container)
     if [ -f "./package.json" ]; then
-        log_info "Copying application source to /opt/slag3D..."
-        cp -r . "${APP_DIR}/"
+        log_info "Copying application source to ${APP_DIR}..."
         
+        # Normalize APP_DIR path and check if we are already inside it
+        APP_DIR_NORM=$(echo "${APP_DIR}" | sed 's|/++||')
+        if [[ "$PWD" == "$APP_DIR_NORM"* ]]; then
+            log_info "Already in ${APP_DIR} - running rebuild, no copy needed."
+            return 0
+        fi
+        
+        # Ensure APP_DIR is an absolute path
+        if [ "${APP_DIR}" != /* ]; then
+            APP_DIR="/opt/slag3d${APP_DIR#/}"
+        fi
+        
+        cp -rL . "${APP_DIR}/"
         cd "${APP_DIR}"
     else
-        # Try alternative sources or provide instructions for manual setup
         if [ ! -f "${APP_DIR}/package.json" ]; then
             log_warn "No package.json found at current location and /opt/slag3D lacks source."
             log_info "Manual installation required:"
