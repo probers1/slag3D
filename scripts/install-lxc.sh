@@ -194,12 +194,33 @@ SESSION_SECRET=$(openssl rand -base64 64)
 REFRESH_TOKEN_SECRET=$(openssl rand -base64 64)
 
 # 🚀 Deployment Mode
-GOOSE_SEED_DB=false        # Production: do NOT auto-seed admin account
-SESSION_EXPIRY_MINUTES=1440  # 24 hours (recommended: ≤7 days for security)
+GOOSE_SEED_DB=false  # Production: no auto-seeding
+SESSION_EXPIRY_MINUTES=1440
+ADMIN_USER=admin
+ADMIN_PASSWORD=$(openssl rand -base64 8 | tr -dc 'A-Za-z0-9!' | head -c 24)
+
 EOF
             
-            log_success "Environment file created with new secrets"
-            log_warn "IMPORTANT: Store .env securely - it was never committed to git"
+            log_success "Environment file created with secure secrets"
+            
+            # Create plaintext password file in /tmp for easy access
+            cat > /tmp/slag3d-admin-password.txt << EOF
+# SLAG3D Initial Admin Password
+# Generated: $(date)
+# ==================================
+USERNAME=admin
+PASSWORD=${ADMIN_PASSWORD}
+# ==================================
+⚠️  IMPORTANT WARNINGS:
+   1. Change this password IMMEDIATELY after first login
+   2. Store this file SECURELY (chmod 600)
+   3. After changing credentials, you can delete this file
+EOF
+chmod 600 /tmp/slag3d-admin-password.txt
+            
+            log_success "Initial admin credentials generated:"
+            echo "   Username: admin"
+            echo "   Password: ${ADMIN_PASSWORD}"
         else
             # Verify existing environment has required variables
             if grep -q "^JWT_SECRET=" "${APP_DIR}/.env" && \
@@ -437,7 +458,7 @@ main() {
 
     check_prerequisites
     #configure_persistent_volumes
-    install_dependencies
+    #install_dependencies
     #install_nodejs
     setup_configuration
     deploy_application

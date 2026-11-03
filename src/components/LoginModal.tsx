@@ -125,21 +125,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </form>
-
-          {/* Default credentials hint */}
-          <div className="mt-6 pt-4 border-t border-[#262632] flex items-center justify-between text-xs text-neutral-400">
-            <div>
-              <span className="text-[11px] text-neutral-500">Default Admin:</span>{' '}
-              <span className="font-mono text-neutral-300">admin</span> / <span className="font-mono text-neutral-300">admin123</span>
-            </div>
-            <button
-              type="button"
-              onClick={fillAdmin}
-              className="text-[11px] text-blue-400 hover:underline"
-            >
-              Auto-fill
-            </button>
-          </div>
         </div>
       </div>
     </ErrorBoundary>
