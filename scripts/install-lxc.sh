@@ -185,39 +185,32 @@ setup_configuration() {
         if [ ! -f "$ENV_FILE" ]; then
             log_info "Generating secure secrets for production..."
             
-            cat > "${APP_DIR}/.env" <<EOF
+            # Generate all secrets first, then write to avoid variable expansion issues
+            JWT_SECRET=$(openssl rand -base64 64 | tr -d '\n')
+            SESSION_SECRET=$(openssl rand -base64 64 | tr -d '\n')
+            REFRESH_TOKEN_SECRET=$(openssl rand -base64 64 | tr -d '\n')
+            
+            # Generate admin password separately (avoid heredoc nesting issues)
+            ADMIN_PASSWORD=$(openssl rand -base64 8 | tr -dc 'A-Za-z0-9!' | head -c 24)
+            
+            cat > "${APP_DIR}/.env" <<'ENDOFENV'
 # SLAG3D Production Environment Configuration
-# Generated: $(date -Iseconds)
+# Generated: $(date +%Y-%m-%dT%H:%M:%S%z)
 
 # 🔐 Security - REQUIRED for production
-JWT_SECRET=$(openssl rand -base64 64)
-SESSION_SECRET=$(openssl rand -base64 64)
-REFRESH_TOKEN_SECRET=$(openssl rand -base64 64)
+JWT_SECRET="${JWT_SECRET}"
+SESSION_SECRET="${SESSION_SECRET}"
+REFRESH_TOKEN_SECRET="${REFRESH_TOKEN_SECRET}"
 
 # 🚀 Deployment Mode
 GOOSE_SEED_DB=false  # Production: no auto-seeding
 SESSION_EXPIRY_MINUTES=1440
 ADMIN_USER=admin
-ADMIN_PASSWORD=$(openssl rand -base64 8 | tr -dc 'A-Za-z0-9!' | head -c 24)
+ADMIN_PASSWORD="${ADMIN_PASSWORD}"
 
-EOF
+ENDOFENV
             
             log_success "Environment file created with secure secrets"
-            
-            # Create plaintext password file in /tmp for easy access
-            cat > /tmp/slag3d-admin-password.txt << EOF
-# SLAG3D Initial Admin Password
-# Generated: $(date)
-# ==================================
-USERNAME=admin
-PASSWORD=${ADMIN_PASSWORD}
-# ==================================
-⚠️  IMPORTANT WARNINGS:
-    1. Change this password IMMEDIATELY after first login
-    2. Store this file SECURELY (chmod 600)
-    3. After changing credentials, you can delete this file
-EOF
-chmod 600 /tmp/slag3d-admin-password.txt
             
             log_success "Initial admin credentials generated:"
             echo "   Username: admin"
