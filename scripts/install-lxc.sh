@@ -53,38 +53,38 @@ check_prerequisites() {
 }
 
 # 2. Configure systemd for auto-mounting persistent volumes
-configure_persistent_volumes() {
-    log_info "Configuring persistent storage..."
-
-    # Create mount units if they don't exist
-    cat <<'EOF' > /etc/systemd/system/data.mount
-[Unit]
-Description=Mount SLAG3D Data Directory
-After=local-fs.target
-
-[Mount]
-What=/dev/disk/by-id/uuid-PLACEHOLDER
-Where=${DATA_DIR}
-Type=ext4
-Options=defaults,noatime
-EOF
-
-    cat <<'EOF' > /etc/systemd/system/uploads.mount
-[Unit]
-Description=Mount SLAG3D Uploads Directory
-After=local-fs.target
-
-[Mount]
-What=/dev/disk/by-id/uuid-PLACEHOLDER
-Where=${UPLOADS_DIR}
-Type=ext4
-Options=defaults,noatime
-EOF
-
-    log_info "Note: Update mount units with actual UUIDs if your /data and /uploads use different partitions."
-    log_info "  Run: lsblk -o NAME,UUID,FSTYPE"
-}
-
+#configure_persistent_volumes() {
+#    log_info "Configuring persistent storage..."
+#
+#    # Create mount units if they don't exist
+#    cat <<'EOF' > /etc/systemd/system/data.mount
+#[Unit]
+#Description=Mount SLAG3D Data Directory
+#After=local-fs.target
+#
+#[Mount]
+#What=/dev/disk/by-id/uuid-PLACEHOLDER
+#Where=${DATA_DIR}
+#Type=ext4
+#Options=defaults,noatime
+#EOF
+#
+#    cat <<'EOF' > /etc/systemd/system/uploads.mount
+#[Unit]
+#Description=Mount SLAG3D Uploads Directory
+#After=local-fs.target
+#
+#[Mount]
+#What=/dev/disk/by-id/uuid-PLACEHOLDER
+#Where=${UPLOADS_DIR}
+#Type=ext4
+#Options=defaults,noatime
+#EOF
+#
+#    log_info "Note: Update mount units with actual UUIDs if your /data and /uploads use different partitions."
+#    log_info "  Run: lsblk -o NAME,UUID,FSTYPE"
+#}
+#
 # 3. Install system dependencies
 install_dependencies() {
     log_info "Updating apt package repositories..."
@@ -100,47 +100,47 @@ install_dependencies() {
 }
 
 # 4. Install Node.js v22 LTS (upgrade from v20 if detected)
-install_nodejs() {
-    log_info "Checking and installing Node.js v22 LTS..."
-
-    # Get current node version
-    local CURRENT_VERSION=""
-    if command -v node >/dev/null 2>&1; then
-        CURRENT_VERSION=$(node -v | cut -d'.' -f1)
-        if [[ "$CURRENT_VERSION" == "v18"* || "$CURRENT_VERSION" == "v17"* || "$CURRENT_VERSION" == "v16"* ]]; then
-            # Old version detected, force upgrade to v22
-            log_warn "Detected Node.js ${CURRENT_VERSION} - upgrading to v22 LTS (required)"
-        fi
-    fi
-
-    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
-        log_info "Setting up NodeSource repository for Node.js v22 LTS..."
-        
-        # Add NodeSource GPG key (deb.nodesource.com uses sha256)
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-        
-        # Add NodeSource repository
-        NODE_VERSION="node_22.x"
-        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_VERSION} nodistro main" \
-          | tee /etc/apt/sources.list.d/nodesource.list
-
-        apt-get update -y
-        apt-get install -y nodejs
-    fi
-
-    # Verify Node.js installation
-    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
-        log_success "Node.js installed successfully: $(node -v)"
-    else
-        log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
-        return 1
-    fi
-
-    echo "Node version: $(node -v)"
-    echo "npm version:  $(npm -v)"
-}
-
+#install_nodejs() {
+#    log_info "Checking and installing Node.js v22 LTS..."
+#
+#    # Get current node version
+#    local CURRENT_VERSION=""
+#    if command -v node >/dev/null 2>&1; then
+#        CURRENT_VERSION=$(node -v | cut -d'.' -f1)
+#        if [[ "$CURRENT_VERSION" == "v18"* || "$CURRENT_VERSION" == "v17"* || "$CURRENT_VERSION" == "v16"* ]]; then
+#            # Old version detected, force upgrade to v22
+#            log_warn "Detected Node.js ${CURRENT_VERSION} - upgrading to v22 LTS (required)"
+#        fi
+#    fi
+#
+#    if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
+#        log_info "Setting up NodeSource repository for Node.js v22 LTS..."
+#        
+#        # Add NodeSource GPG key (deb.nodesource.com uses sha256)
+#        mkdir -p /etc/apt/keyrings
+#        curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+#        
+#        # Add NodeSource repository
+#        NODE_VERSION="node_22.x"
+#        echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_VERSION} nodistro main" \
+#          | tee /etc/apt/sources.list.d/nodesource.list
+#
+#        apt-get update -y
+#        apt-get install -y nodejs
+#    fi
+#
+#    # Verify Node.js installation
+#    if command -v node >/dev/null 2>&1 && [ $(node -v) = "v22.x.x" ]; then
+#        log_success "Node.js installed successfully: $(node -v)"
+#    else
+#        log_warn "Node.js may not be correctly installed. Skipping npm dependencies..."
+#        return 1
+#    fi
+#
+#    echo "Node version: $(node -v)"
+#    echo "npm version:  $(npm -v)"
+#}
+#
 # 5. Setup configuration and secrets
 setup_configuration() {
     local APP_DIR="${APP_DIR:-/opt/slag3D}"
