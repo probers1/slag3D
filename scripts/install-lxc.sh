@@ -421,9 +421,9 @@ main() {
     echo ""
 
     check_prerequisites
-    configure_persistent_volumes
+    #configure_persistent_volumes
     install_dependencies
-    install_nodejs
+    #install_nodejs
     setup_configuration
     deploy_application
     build_application
