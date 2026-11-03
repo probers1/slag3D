@@ -8,7 +8,7 @@ router.use(requireAuth);
 
 // GET /api/collections
 router.get('/', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
 
   // Retrieve user collections and model counts
   const collections = db.prepare(`
@@ -31,7 +31,7 @@ router.get('/', (req, res) => {
 
 // POST /api/collections
 router.post('/', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { name, description = '', parent_folder_id = null } = req.body;
 
   if (!name || !String(name).trim()) {
@@ -62,7 +62,7 @@ router.post('/', (req, res) => {
 
 // PUT /api/collections/:id
 router.put('/:id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
   const { name, description, parent_folder_id } = req.body;
 
@@ -112,7 +112,7 @@ router.put('/:id', (req, res) => {
 
 // DELETE /api/collections/:id
 router.delete('/:id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
 
   const existing = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);
@@ -124,9 +124,34 @@ router.delete('/:id', (req, res) => {
   res.json({ message: 'Collection deleted successfully' });
 });
 
+// Helper transaction to add model to collection atomically
+const addModelToCollectionTx = db.transaction((collectionId: string, modelId: string, uId: string) => {
+  // 1. Verify Collection and User Ownership
+  const collection = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collectionId, uId);
+  if (!collection) {
+    const err: any = new Error('Collection not found or unauthorized');
+    err.status = 404;
+    throw err;
+  }
+
+  // 2. Verify Model existence
+  const model = db.prepare('SELECT id FROM models WHERE id = ?').get(modelId);
+  if (!model) {
+    const err: any = new Error('Model not found');
+    err.status = 404;
+    throw err;
+  }
+
+  // 3. Insert the Model-Collection relationship (Idempotent)
+  db.prepare(`
+    INSERT OR IGNORE INTO collection_models (collection_id, model_id)
+    VALUES (?, ?)
+  `).run(collectionId, modelId);
+});
+
 // POST /api/collections/:id/models
 router.post('/:id/models', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id } = req.params;
   const { model_id } = req.body;
 
@@ -134,27 +159,19 @@ router.post('/:id/models', (req, res) => {
     return res.status(400).json({ error: 'model_id is required' });
   }
 
-  const collection = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);
-  if (!collection) {
-    return res.status(404).json({ error: 'Collection not found' });
+  try {
+    addModelToCollectionTx(id, model_id, userId!);
+    res.json({ message: 'Model added to collection successfully' });
+  } catch (error: any) {
+    console.error('Failed to add model to collection:', error?.message || error);
+    const status = error.status || 500;
+    res.status(status).json({ error: error?.message || 'Failed to add model to collection due to internal error.' });
   }
-
-  const model = db.prepare('SELECT id FROM models WHERE id = ?').get(model_id);
-  if (!model) {
-    return res.status(404).json({ error: 'Model not found' });
-  }
-
-  db.prepare(`
-    INSERT OR IGNORE INTO collection_models (collection_id, model_id)
-    VALUES (?, ?)
-  `).run(id, model_id);
-
-  res.json({ message: 'Model added to collection successfully' });
 });
 
 // DELETE /api/collections/:id/models/:model_id
 router.delete('/:id/models/:model_id', (req, res) => {
-  const userId = req.session.userId;
+  const userId = req.userId;
   const { id, model_id } = req.params;
 
   const collection = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(id, userId);

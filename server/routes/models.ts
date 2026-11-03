@@ -6,9 +6,31 @@ import { db } from '../db.ts';
 import { requireAuth } from '../middleware.ts';
 import { uploadMiddleware, processModelFiles } from '../upload.ts';
 import { enqueueThumbnailRender } from '../../lib/queue.ts';
+import rateLimit from 'express-rate-limit';
+import { getTagsWithCounts } from '../lib/tags.ts';
 
 const router = Router();
 router.use(requireAuth);
+
+/**
+ * Rate limiter for model uploads (prevents DDoS via rapid large file uploads)
+ */
+const uploadLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 30, // Maximum 30 uploads per hour per IP
+  message: { error: 'Too many model uploads. Please slow down. Try again in an hour.' },
+  standardHeaders: true,
+});
+
+/**
+ * Rate limiter for collection operations
+ */
+const collectionLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 50, // Maximum 50 collection ops per hour per IP
+  message: { error: 'Too many collection requests. Please slow down.' },
+  standardHeaders: true,
+});
 
 // Helper to associate tags with a model
 export function syncModelTags(modelId: string, tagsInput: string | string[]) {
@@ -46,20 +68,13 @@ export function syncModelTags(modelId: string, tagsInput: string | string[]) {
 
 // GET /api/tags — Returns active tag list with usage counts
 router.get('/tags', (req, res) => {
-  const tags = db.prepare(`
-    SELECT t.id, t.name, COUNT(mt.model_id) as count
-    FROM tags t
-    JOIN model_tags mt ON t.id = mt.tag_id
-    GROUP BY t.id
-    HAVING count > 0
-    ORDER BY count DESC, t.name ASC
-  `).all();
+  const tags = getTagsWithCounts();
   res.json({ tags });
 });
 
 // GET /api/models — Paginated search & filter
 router.get('/', (req, res) => {
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId || '';
   const page = Math.max(1, parseInt(req.query.page as string) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string) || 12));
   const offset = (page - 1) * limit;
@@ -176,59 +191,96 @@ router.get('/', (req, res) => {
   });
 });
 
-// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z)
-router.post('/', uploadMiddleware.array('files', 20), async (req, res) => {
-  const userId = req.session.userId!;
-  const { title, description = '', tags = '', collection_id } = req.body;
-
-  const files = (req.files as Express.Multer.File[]) || [];
-  if (!files || files.length === 0) {
-    return res.status(400).json({ error: 'At least one 3D file or archive (.stl, .3mf, .obj, .zip, .7z) is required' });
+// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z) with rate limiting
+router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req, res) => {
+  // Make sure userId exists even if session doesn't match request object
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
   }
 
-  const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
-  const modelId = uuidv4();
+  let createdModelId: string | null = null;
 
-  db.prepare(`
-    INSERT INTO models (id, user_id, title, description, thumbnail_status)
-    VALUES (?, ?, ?, ?, 'pending')
-  `).run(modelId, userId, modelTitle, String(description).trim());
+  try {
+    const { title, description = '', tags = '', collection_id } = req.body;
 
-  // Extract and process files
-  const processedFiles = await processModelFiles(modelId, files);
-
-  // Sync tags
-  if (tags) {
-    syncModelTags(modelId, tags);
-  }
-
-  // Link to collection if specified
-  if (collection_id) {
-    const coll = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collection_id, userId);
-    if (coll) {
-      db.prepare('INSERT OR IGNORE INTO collection_models (collection_id, model_id) VALUES (?, ?)').run(collection_id, modelId);
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'At least one 3D file or archive (.stl, .3mf, .obj, .zip, .7z) is required' });
     }
+
+    const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
+    const modelId = uuidv4();
+    createdModelId = modelId;
+
+    db.prepare(`
+      INSERT INTO models (id, user_id, title, description, thumbnail_status)
+      VALUES (?, ?, ?, ?, 'pending')
+    `).run(modelId, userId, modelTitle, String(description).trim());
+
+    // Extract and process files
+    const processedFiles = await processModelFiles(modelId, files);
+
+    // Sync tags
+    if (tags) {
+      syncModelTags(modelId, tags);
+    }
+
+    // Link to collection if specified
+    if (collection_id) {
+      const coll = db.prepare('SELECT id FROM collections WHERE id = ? AND user_id = ?').get(collection_id, userId);
+      if (coll) {
+        db.prepare('INSERT OR IGNORE INTO collection_models (collection_id, model_id) VALUES (?, ?)').run(collection_id, modelId);
+      }
+    }
+
+    // Retrieve complete created model info
+    const createdModel = db.prepare(`
+      SELECT m.*, u.username as owner_username,
+        (SELECT COUNT(*) FROM favorites WHERE model_id = m.id AND user_id = ?) as is_favorited
+      FROM models m
+      JOIN users u ON m.user_id = u.id
+      WHERE m.id = ?
+    `).get(userId, modelId);
+
+    res.status(201).json({
+      model: createdModel,
+      files: processedFiles,
+    });
+  } catch (err: any) {
+    console.error('[SLAG3D] Model upload failed:', err?.message || err);
+    // Clean up ONLY the specific model record and files if processing failed midway
+    if (createdModelId) {
+      try {
+        const dir = path.resolve(process.cwd(), 'uploads', 'models', createdModelId);
+        if (fs.existsSync(dir)) {
+          fs.rmSync(dir, { recursive: true, force: true });
+        }
+        db.prepare('DELETE FROM models WHERE id = ?').run(createdModelId);
+      } catch (cleanupErr) {
+        console.warn('[SLAG3D] Orphan cleanup failed:', cleanupErr);
+      }
+    }
+    // Clean up temporary upload files from multer
+    const files = (req.files as Express.Multer.File[]) || [];
+    for (const f of files) {
+      try {
+        if (f.path && fs.existsSync(f.path)) {
+          fs.unlinkSync(f.path);
+        }
+      } catch {}
+    }
+    res.status(500).json({ error: 'Failed to process model upload' });
   }
-
-  // Retrieve complete created model info
-  const createdModel = db.prepare(`
-    SELECT m.*, u.username as owner_username,
-      (SELECT COUNT(*) FROM favorites WHERE model_id = m.id AND user_id = ?) as is_favorited
-    FROM models m
-    JOIN users u ON m.user_id = u.id
-    WHERE m.id = ?
-  `).get(userId, modelId);
-
-  res.status(201).json({
-    model: createdModel,
-    files: processedFiles,
-  });
 });
 
 // GET /api/models/:id — Full details, file paths, tags, collections
 router.get('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare(`
     SELECT 
@@ -281,8 +333,11 @@ router.get('/:id', (req, res) => {
 // PUT /api/models/:id — Updates title, description, tags, primary 3D file
 router.put('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
   const { title, description, tags, primary_file_id } = req.body;
 
   const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
@@ -322,8 +377,11 @@ router.put('/:id', (req, res) => {
 // DELETE /api/models/:id — Purges model record, files, and thumbnail from disk
 router.delete('/:id', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id, user_id, title FROM models WHERE id = ?').get(id) as { id: string; user_id: string; title: string } | undefined;
   if (!model) {
@@ -363,7 +421,10 @@ router.delete('/:id', (req, res) => {
 // POST /api/models/:id/favorite — Toggles favorite status
 router.post('/:id/favorite', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id FROM models WHERE id = ?').get(id);
   if (!model) {
@@ -384,8 +445,11 @@ router.post('/:id/favorite', (req, res) => {
 // POST /api/models/:id/regenerate-thumbnail — Manually re-queues render job
 router.post('/:id/regenerate-thumbnail', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
 
   const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
   if (!model) {
@@ -420,8 +484,11 @@ router.post('/:id/regenerate-thumbnail', (req, res) => {
 // POST /api/models/:id/thumbnail-client — Client Three.js snapshot capture fallback
 router.post('/:id/thumbnail-client', (req, res) => {
   const { id } = req.params;
-  const userId = req.session.userId!;
-  const userRole = req.session.userRole;
+  const userId = req.session.userId || (req as any).userId;
+  const userRole = req.session.userRole || (req as any).role;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
   const { imageBase64 } = req.body;
 
   if (!imageBase64 || !imageBase64.includes('base64,')) {
@@ -467,4 +534,58 @@ router.post('/:id/thumbnail-client', (req, res) => {
   }
 });
 
+// POST /api/models/:id/files — Add additional 3D files to an existing model
+router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), async (req, res) => {
+  const { id } = req.params;
+  const userId = req.session.userId || (req as any).userId;
+  if (!userId) {
+    return res.status(401).json({ error: 'Unauthorized: Missing user session or token' });
+  }
+
+  try {
+    const model = db.prepare('SELECT id, user_id FROM models WHERE id = ?').get(id) as { id: string; user_id: string } | undefined;
+    if (!model) {
+      return res.status(404).json({ error: 'Model not found' });
+    }
+    if (model.user_id !== userId) {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
+
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (!files.length) return res.status(400).json({ error: 'No files provided' });
+
+    const processedFiles = await processModelFiles(id, files, { isSupplementary: true });
+
+    // Recalculate primary 3D file for the entire model
+    const new3dFiles = processedFiles.filter((f) => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
+    if (new3dFiles.length > 0) {
+      new3dFiles.sort((a, b) => b.file_size - a.file_size);
+      const largestNew = new3dFiles[0];
+
+      const currentPrimary = db.prepare('SELECT id, file_size FROM files WHERE model_id = ? AND is_primary_3d = 1').get(id) as
+        | { id: string; file_size: number }
+        | undefined;
+
+      if (!currentPrimary || largestNew.file_size > currentPrimary.file_size) {
+        db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
+        db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, largestNew.id);
+        largestNew.is_primary_3d = 1;
+
+        // Re-queue thumbnail render for the newly designated primary 3D file
+        const primaryExt = path.extname(largestNew.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
+        const relativeOrAbs = path.resolve(process.cwd(), largestNew.file_path.replace(/^\//, ''));
+        enqueueThumbnailRender({
+          modelId: id,
+          filePath: relativeOrAbs,
+          fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+        });
+      }
+    }
+
+    res.json({ files: processedFiles });
+  } catch (err: any) {
+    console.error('[SLAG3D] Supplementary file upload failed:', err?.message || err);
+    res.status(500).json({ error: 'Failed to process file upload' });
+  }
+});
 export default router;

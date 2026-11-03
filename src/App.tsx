@@ -9,7 +9,8 @@ import { AdminModal } from './components/AdminModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
-import { apiFetch, getStoredToken, setStoredToken, setStoredUser } from './utils/api';
+import { apiFetch, getStoredToken, setStoredToken, setStoredUser, getStoredCsrfToken, setStoredCsrfToken } from './utils/api';
+import { useVaultData } from './hooks/useVaultData';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -37,42 +38,38 @@ export default function App() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
 
-  // Check auth status on mount or auto-login with default admin
+  // Check auth status on mount
   const checkAuth = async () => {
     try {
       const res = await apiFetch('/api/auth/me');
       if (res.ok) {
         const data = await res.json();
         if (data.user) {
-          setCurrentUser(data.user);
-          setStoredUser(data.user);
+          const userWithId = { ...data.user, id: String(data.user?.id || '') };
+          setCurrentUser(userWithId);
+          setStoredUser(userWithId);
+          // Ensure double-submit CSRF token is synchronized in localStorage
+          if (!getStoredCsrfToken()) {
+            try {
+              const csrfRes = await apiFetch('/api/auth/csrf-token');
+              if (csrfRes.ok) {
+                const csrfData = await csrfRes.json();
+                if (csrfData.csrfToken) {
+                  setStoredCsrfToken(csrfData.csrfToken);
+                }
+              }
+            } catch {}
+          }
           setAuthChecked(true);
           return;
         }
       }
-    } catch {}
-
-    // Auto-login with default admin credentials if no valid session
-    try {
-      const loginRes = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'admin', password: 'admin123' }),
-        credentials: 'include',
-      });
-      if (loginRes.ok) {
-        const loginData = await loginRes.json();
-        if (loginData.token) setStoredToken(loginData.token);
-        if (loginData.user) {
-          setCurrentUser(loginData.user);
-          setStoredUser(loginData.user);
-        }
-      }
     } catch (err) {
-      console.error('Auto-login error:', err);
-    } finally {
-      setAuthChecked(true);
+      console.warn('[SLAG3D] Auth check failed, showing login prompt:', err);
     }
+
+    // Set authenticated state as false if no valid session found
+    setAuthChecked(true); // Mark auth check complete so we render the proper UI
   };
 
   useEffect(() => {
@@ -87,6 +84,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setCollections(data.collections || []);
+      } else if (res.status === 401) {
+        // Session expired - re-check auth
+        console.warn('[SLAG3D] Collections fetch returned 401');
+        checkAuth();
       }
     } catch (err) {
       console.error('Error fetching collections:', err);
@@ -100,6 +101,10 @@ export default function App() {
       if (res.ok) {
         const data = await res.json();
         setTags(data.tags || []);
+      } else if (res.status === 401) {
+        // Session expired - re-check auth  
+        console.warn('[SLAG3D] Tags fetch returned 401');
+        checkAuth();
       }
     } catch (err) {
       console.error('Error fetching tags:', err);
@@ -127,7 +132,8 @@ export default function App() {
         setModels(data.models || []);
         setPagination(data.pagination || { total: 0, page: 1, limit: itemsPerPage, totalPages: 1 });
       } else if (res.status === 401) {
-        // Re-check auth if session dropped
+        // Session expired or token invalid - re-check auth and show login prompt if needed
+        console.warn('[SLAG3D] Model fetch returned 401 - session may have expired');
         checkAuth();
       }
     } catch (err) {
@@ -141,11 +147,16 @@ export default function App() {
     if (currentUser) {
       fetchCollections();
       fetchTags();
-      fetchModels();
+      // fetchModels is now handled inside the hook
     }
-  }, [currentUser, fetchCollections, fetchTags, fetchModels]);
+  }, [currentUser, fetchCollections, fetchTags]);
 
-  // Tab change handler
+  // Fetch models whenever filters, pagination, or user context change
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
+  // Tab change handler (all, mine, favorites, collections)
   const handleTabChange = (tab: 'all' | 'mine' | 'favorites' | 'collections') => {
     setActiveTab(tab);
     setCurrentPage(1);
@@ -191,6 +202,7 @@ export default function App() {
       await apiFetch('/api/auth/logout', { method: 'POST' });
       setStoredToken(null);
       setStoredUser(null);
+      setStoredCsrfToken(null);
       setCurrentUser(null);
       setModels([]);
     } catch (err) {
@@ -207,7 +219,7 @@ export default function App() {
         body: JSON.stringify({ name, description, parent_folder_id: parentId }),
       });
       if (res.ok) {
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       } else {
         const data = await res.json();
         alert(data.error || 'Failed to create collection');
@@ -225,7 +237,7 @@ export default function App() {
         body: JSON.stringify({ name }),
       });
       if (res.ok) {
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       } else {
         const data = await res.json();
         alert(data.error || 'Failed to rename collection');
@@ -240,7 +252,7 @@ export default function App() {
       const res = await apiFetch(`/api/collections/${id}`, { method: 'DELETE' });
       if (res.ok) {
         if (selectedCollectionId === id) setSelectedCollectionId(null);
-        fetchCollections();
+        fetchCollections();  // Only needs to refresh collections list
       }
     } catch (err) {
       console.error('Delete collection error:', err);
@@ -527,8 +539,7 @@ export default function App() {
           onClose={() => setIsUploadOpen(false)}
           onUploadSuccess={() => {
             fetchModels();
-            fetchTags();
-            fetchCollections();
+            fetchTags();            
           }}
         />
       )}
@@ -551,7 +562,15 @@ export default function App() {
         <LoginModal
           onLoginSuccess={(user) => {
             setCurrentUser(user);
+            setAuthChecked(true);
             setIsLoginOpen(false);
+
+            // Fetch data after brief timeout to ensure login completes first
+            setTimeout(async () => {
+              await fetchModels();
+              await fetchTags();
+              await fetchCollections();
+            }, 50);
           }}
           onClose={() => setIsLoginOpen(false)}
         />
@@ -566,9 +585,9 @@ export default function App() {
           isAdmin={currentUser?.role === 'admin'}
           onClose={() => setSelectedModelId(null)}
           onModelUpdated={() => {
+            // Model was updated/uploaded - refresh specific view data only
             fetchModels();
-            fetchTags();
-            fetchCollections();
+            // Tags and collections don't change when model is selected for viewing
           }}
         />
       )}

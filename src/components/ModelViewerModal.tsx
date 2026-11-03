@@ -1,5 +1,13 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+// src/components/ModelViewerModal.tsx
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+} from 'react';
 import * as THREE from 'three';
+import { ErrorBoundary } from './ErrorBoundary';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
@@ -18,9 +26,10 @@ import {
   Trash2,
   Eye,
   Star,
+  Upload,
 } from 'lucide-react';
 import { ModelFile, CollectionItem } from '../types';
-import { apiFetch } from '../utils/api';
+import { apiFetch, getStoredToken } from '../utils/api';
 
 interface ModelDetail {
   id: string;
@@ -56,6 +65,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   onModelUpdated,
 }) => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Model data state
   const [model, setModel] = useState<ModelDetail | null>(null);
@@ -74,17 +84,21 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     heightMm: number;
     volumeCm3: number;
     weightGrams: number;
-    costUsd: number;
   }>({
     widthMm: 0,
     depthMm: 0,
     heightMm: 0,
     volumeCm3: 0,
     weightGrams: 0,
-    costUsd: 0,
   });
 
   const [filamentPriceKg, setFilamentPriceKg] = useState<number>(20.0); // $20/kg default
+
+  // Derive filament cost dynamically to avoid state loop re-renders
+  const estimatedCostUsd = useMemo(() => {
+    if (meshStats.weightGrams <= 0) return 0;
+    return Number(((meshStats.weightGrams / 1000) * filamentPriceKg).toFixed(2));
+  }, [meshStats.weightGrams, filamentPriceKg]);
 
   // Editing states
   const [isEditing, setIsEditing] = useState(false);
@@ -112,7 +126,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       setEditDesc(data.model.description || '');
       setEditTags(data.model.tags ? data.model.tags.join(', ') : '');
 
-      // Select primary file or first file if not yet selected
       if (data.model.files && data.model.files.length > 0) {
         setSelectedFileId((prev) => {
           if (prev && data.model.files.some((f: ModelFile) => f.id === prev)) {
@@ -133,14 +146,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     fetchModel();
   }, [modelId]);
 
-  // Recalculate cost when filament price or weight changes
-  useEffect(() => {
-    if (meshStats.weightGrams > 0) {
-      const cost = (meshStats.weightGrams / 1000) * filamentPriceKg;
-      setMeshStats((prev) => ({ ...prev, costUsd: Number(cost.toFixed(2)) }));
-    }
-  }, [filamentPriceKg, meshStats.weightGrams]);
-
   // Initialize Three.js scene once on mount
   useEffect(() => {
     if (!mountRef.current) return;
@@ -148,7 +153,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     const width = mountRef.current.clientWidth || 600;
     const height = mountRef.current.clientHeight || 450;
 
-    // 1. Scene & Renderer setup
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x121214);
     sceneRef.current = scene;
@@ -162,17 +166,14 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     mountRef.current.innerHTML = '';
     mountRef.current.appendChild(renderer.domElement);
 
-    // 2. Camera setup (fov: 45)
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 5000);
     cameraRef.current = camera;
 
-    // 3. OrbitControls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
     controlsRef.current = controls;
 
-    // 4. Lighting Rig
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.65);
     scene.add(ambientLight);
 
@@ -184,12 +185,10 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     fillLight.position.set(-1, -0.5, -1).normalize();
     scene.add(fillLight);
 
-    // Grid Floor
     const grid = new THREE.GridHelper(200, 20, 0x333344, 0x1c1c24);
     grid.position.y = -0.01;
     scene.add(grid);
 
-    // Animation Loop
     let animId: number;
     const animate = () => {
       animId = requestAnimationFrame(animate);
@@ -260,7 +259,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       scene.remove(activeMeshRef.current);
       activeMeshRef.current.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {
-          (child as THREE.Mesh).geometry?.dispose();
+          const mesh = child as THREE.Mesh;
+          mesh.geometry?.dispose();
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach((m) => m.dispose());
+          } else {
+            mesh.material?.dispose();
+          }
         }
       });
       activeMeshRef.current = null;
@@ -309,7 +314,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       const volumeCm3 = volumeMm3 / 1000.0;
       // Standard PLA density = 1.24 g/cm3; assuming effective infill/walls (~45% of solid volume)
       const weightGrams = volumeCm3 * 1.24 * 0.45;
-      const costUsd = (weightGrams / 1000) * filamentPriceKg;
 
       setMeshStats({
         widthMm: Number(size.x.toFixed(1)),
@@ -317,7 +321,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         heightMm: Number(size.y.toFixed(1)),
         volumeCm3: Number(volumeCm3.toFixed(2)),
         weightGrams: Number(weightGrams.toFixed(1)),
-        costUsd: Number(costUsd.toFixed(2)),
       });
 
       setLoadingMesh(false);
@@ -325,8 +328,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 
     const ext = activeFile.original_name.split('.').pop()?.toLowerCase();
 
+    const storedAuthToken = getStoredToken();
+
     if (ext === 'stl') {
       const loader = new STLLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       loader.load(
         activeFile.file_path,
         (geometry) => {
@@ -342,6 +350,9 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
       );
     } else if (ext === 'obj') {
       const loader = new OBJLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       loader.load(
         activeFile.file_path,
         (obj) => {
@@ -359,12 +370,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         }
       );
     } else {
-      // 3MF or placeholder geometry
       const geom = new THREE.DodecahedronGeometry(25, 0);
       const mesh = new THREE.Mesh(geom, material);
       attachAndPosition(mesh, geom);
     }
-  }, [filamentPriceKg, wireframe]);
+  }, [wireframe]);
 
   // When model or selectedFileId changes, load that file into the Three.js scene
   useEffect(() => {
@@ -375,7 +385,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
   }, [model, selectedFileId, loadActiveMesh]);
 
-  // Toggle wireframe mode
+  // Toggle wireframe mode dynamically
   const toggleWireframe = () => {
     setWireframe((prev) => {
       const next = !prev;
@@ -414,7 +424,6 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     setSaveToast(null);
 
     try {
-      // Render clean frame right before capturing canvas
       rendererRef.current.render(sceneRef.current, cameraRef.current);
       const dataUrl = rendererRef.current.domElement.toDataURL('image/png');
 
@@ -518,6 +527,33 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
     }
   };
 
+  // Upload supplementary files
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const form = new FormData();
+    for (const f of files) form.append('files', f as File);
+
+    try {
+      const res = await apiFetch(`/api/models/${modelId}/files`, {
+        method: 'POST',
+        body: form,
+      });
+
+      if (!res.ok) throw new Error('Upload failed');
+
+      await fetchModel();
+      onModelUpdated();
+      setSaveToast('Files added successfully');
+      setTimeout(() => setSaveToast(null), 2500);
+    } catch (err: any) {
+      alert(err.message || 'Error uploading files');
+    } finally {
+      if (e.target) e.target.value = '';
+    }
+  };
+
   // Delete model
   const handleDeleteModel = async () => {
     if (!model) return;
@@ -538,438 +574,460 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   const currentActiveFile = model?.files.find((f) => f.id === selectedFileId) || model?.files[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
-      <div className="bg-[#16161b] border border-[#2b2b36] rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl">
-        {/* Modal Top Header */}
-        <div className="flex items-center justify-between px-6 py-3.5 border-b border-[#252530] bg-[#1a1a22]">
-          <div className="flex items-center gap-3 truncate">
-            <div className="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
-              <Box className="w-4 h-4" />
+    <ErrorBoundary>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
+        <div className="bg-[#16161b] border border-[#2b2b36] rounded-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col shadow-2xl">
+          {/* Modal Top Header */}
+          <div className="flex items-center justify-between px-6 py-3.5 border-b border-[#252530] bg-[#1a1a22]">
+            <div className="flex items-center gap-3 truncate">
+              <div className="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
+                <Box className="w-4 h-4" />
+              </div>
+              <div className="truncate">
+                <h2 className="text-base font-bold text-white truncate font-['Plus_Jakarta_Sans',sans-serif]">
+                  {model?.title || 'Loading Model...'}
+                </h2>
+                <div className="flex items-center gap-2 text-xs text-neutral-400">
+                  <span>by {model?.owner_username}</span>
+                  <span aria-hidden="true">·</span>
+                  <span>
+                    {model?.files.length || 0} {model?.files.length === 1 ? 'file' : 'files'}
+                  </span>
+                  {currentActiveFile && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-blue-400 font-mono truncate">
+                        Viewing: {currentActiveFile.original_name}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="truncate">
-              <h2 className="text-base font-bold text-white truncate font-['Plus_Jakarta_Sans',sans-serif]">
-                {model?.title || 'Loading Model...'}
-              </h2>
-              <div className="flex items-center gap-2 text-xs text-neutral-400">
-                <span>by {model?.owner_username}</span>
-                <span aria-hidden="true">·</span>
-                <span>
-                  {model?.files.length} {model?.files.length === 1 ? 'file' : 'files'}
-                </span>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {model && (
+                <button
+                  onClick={handleToggleFavorite}
+                  className={`p-2 rounded-lg border transition-all ${
+                    model.is_favorited
+                      ? 'bg-red-500/20 text-red-400 border-red-500/40 hover:bg-red-500/30'
+                      : 'bg-[#22222a] text-neutral-400 border-[#30303c] hover:text-white'
+                  }`}
+                  title={model.is_favorited ? 'Favorited' : 'Favorite'}
+                >
+                  <Heart className={`w-4 h-4 ${model.is_favorited ? 'fill-current text-red-500' : ''}`} />
+                </button>
+              )}
+
+              <button
+                onClick={onClose}
+                className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+
+          {/* Modal Body */}
+          <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto">
+            {/* Left Column: 3D Viewport Stage */}
+            <div className="lg:col-span-7 bg-[#121214] flex flex-col relative border-b lg:border-b-0 lg:border-r border-[#252530] min-h-[400px] lg:min-h-[560px]">
+              <div ref={mountRef} className="w-full h-full flex-1 cursor-grab active:cursor-grabbing" />
+
+              {/* Active File Switcher Overlay */}
+              {model && model.files.length > 1 && (
+                <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs shadow-xl">
+                  <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1.5 shrink-0">
+                    <Box className="w-3.5 h-3.5 text-blue-400" />
+                    Viewing:
+                  </span>
+                  <select
+                    value={currentActiveFile?.id || ''}
+                    onChange={(e) => setSelectedFileId(e.target.value)}
+                    className="bg-[#121216] border border-[#35354a] rounded-lg px-2.5 py-1 text-white text-xs outline-none focus:border-blue-500 font-medium max-w-[210px] truncate"
+                  >
+                    {model.files.map((file, idx) => (
+                      <option key={file.id} value={file.id}>
+                        {idx + 1}. {file.original_name} {file.is_primary_3d === 1 ? '★ [Primary]' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-neutral-500 font-mono shrink-0">
+                    {(model.files.findIndex((f) => f.id === currentActiveFile?.id) + 1)}/{model.files.length}
+                  </span>
+                </div>
+              )}
+
+              {loadingMesh && (
+                <div className="absolute top-4 right-4 z-20 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs text-blue-400 flex items-center gap-2 shadow-lg">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  <span>Loading 3D asset...</span>
+                </div>
+              )}
+
+              {/* Viewport Controls */}
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-[#1b1b24]/90 backdrop-blur-md border border-[#2e2e3d] rounded-xl shadow-xl text-xs z-10">
+                <button
+                  onClick={toggleWireframe}
+                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                    wireframe ? 'bg-blue-600 text-white' : 'text-neutral-300 hover:bg-[#282834]'
+                  }`}
+                >
+                  {wireframe ? 'Wireframe: ON' : 'Solid Mesh'}
+                </button>
+
+                <button
+                  onClick={resetCamera}
+                  className="px-3 py-1.5 text-neutral-300 hover:bg-[#282834] rounded-lg font-medium transition-colors"
+                >
+                  Reset Camera
+                </button>
+
+                <div className="h-4 w-px bg-[#303040]" />
+
+                <button
+                  onClick={handleSaveThumbnail}
+                  disabled={isCapturingThumb}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-sm transition-all"
+                  title="Capture this camera angle as the model's 512x512 thumbnail"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                  <span>{isCapturingThumb ? 'Saving Angle...' : 'Save as Thumbnail'}</span>
+                </button>
+              </div>
+
+              {saveToast && (
+                <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-950/90 border border-emerald-700/60 text-emerald-200 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 z-30">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>{saveToast}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Right Column: Analytics & Management */}
+            <div className="lg:col-span-5 p-6 flex flex-col gap-6 overflow-y-auto bg-[#18181f]">
+              {/* Slicing Analytics */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-blue-400" />
+                    Slicing & Mesh Analytics
+                  </h3>
+                  <span className="text-[10px] text-neutral-400 font-mono">PLA @ 1.24 g/cm³</span>
+                </div>
+
                 {currentActiveFile && (
-                  <>
-                    <span aria-hidden="true">·</span>
-                    <span className="text-blue-400 font-mono truncate">
-                      Viewing: {currentActiveFile.original_name}
+                  <div className="text-[11px] text-blue-300 bg-blue-950/40 border border-blue-900/50 rounded-lg px-2.5 py-1 flex items-center gap-1.5 truncate">
+                    <Box className="w-3 h-3 text-blue-400 shrink-0" />
+                    <span className="truncate">Analyzing: <strong>{currentActiveFile.original_name}</strong></span>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
+                    <span className="text-[10px] text-neutral-400">Dimensions (XYZ)</span>
+                    <span className="font-mono font-bold text-white mt-1 tabular-nums">
+                      {meshStats.widthMm} × {meshStats.depthMm} × {meshStats.heightMm}{' '}
+                      <span className="text-[10px] font-normal text-neutral-400">mm</span>
                     </span>
+                  </div>
+
+                  <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
+                    <span className="text-[10px] text-neutral-400">Watertight Volume</span>
+                    <span className="font-mono font-bold text-white mt-1 tabular-nums">
+                      {meshStats.volumeCm3}{' '}
+                      <span className="text-[10px] font-normal text-neutral-400">cm³</span>
+                    </span>
+                  </div>
+
+                  <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
+                    <span className="text-[10px] text-neutral-400">Est. PLA Weight</span>
+                    <span className="font-mono font-bold text-emerald-400 mt-1 tabular-nums">
+                      ~{meshStats.weightGrams}{' '}
+                      <span className="text-[10px] font-normal text-neutral-400">g</span>
+                    </span>
+                  </div>
+
+                  <div className="col-span-2 sm:col-span-3 p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex items-center justify-between">
+                    <div>
+                      <span className="text-[10px] text-neutral-400 block">Estimated Filament Cost</span>
+                      <span className="font-mono font-bold text-amber-400 text-sm mt-0.5 tabular-nums">
+                        ${estimatedCostUsd.toFixed(2)}{' '}
+                        <span className="text-[10px] font-normal text-neutral-400">USD</span>
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-xs">
+                      <span className="text-[10px] text-neutral-500">Rate:</span>
+                      <div className="flex items-center bg-[#202028] border border-[#353545] rounded px-1.5 py-0.5">
+                        <span className="text-neutral-400 text-xs">$</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max="200"
+                          step="1"
+                          value={filamentPriceKg}
+                          onChange={(e) => setFilamentPriceKg(Number(e.target.value))}
+                          className="w-10 bg-transparent text-white text-xs font-mono outline-none text-right pl-0.5"
+                        />
+                        <span className="text-neutral-400 text-[10px]">/kg</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Files List */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                    <FileCode className="w-4 h-4 text-blue-400" />
+                    Model Files ({model?.files.length || 0})
+                  </h3>
+                  <span className="text-[11px] text-neutral-400">Click any file to view in 3D</span>
+                </div>
+
+                <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
+                  {model?.files.map((file) => {
+                    const isCurrent = file.id === currentActiveFile?.id;
+                    return (
+                      <div
+                        key={file.id}
+                        onClick={() => setSelectedFileId(file.id)}
+                        className={`flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer transition-all border ${
+                          isCurrent
+                            ? 'bg-blue-950/30 border-blue-500/60 shadow-sm shadow-blue-950/30'
+                            : 'bg-[#141418] hover:bg-[#1a1a22] border-[#2a2a35] hover:border-[#38384a]'
+                        }`}
+                      >
+                        <div className="truncate mr-2">
+                          <div className="flex items-center gap-1.5 truncate">
+                            <span
+                              className={`font-semibold truncate ${
+                                isCurrent ? 'text-blue-300' : 'text-neutral-200'
+                              }`}
+                            >
+                              {file.original_name}
+                            </span>
+
+                            {file.is_primary_3d === 1 && (
+                              <span className="flex items-center gap-1 px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[9px] font-mono shrink-0">
+                                <Star className="w-2.5 h-2.5 fill-current" />
+                                PRIMARY
+                              </span>
+                            )}
+
+                            {isCurrent && (
+                              <span className="flex items-center gap-1 px-1.5 py-0.2 bg-blue-600/30 text-blue-400 border border-blue-500/40 rounded text-[9px] font-mono shrink-0">
+                                <Eye className="w-2.5 h-2.5" />
+                                VIEWING
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[10px] text-neutral-500 font-mono">
+                            {(file.file_size / 1024 / 1024).toFixed(2)} MB · {file.mime_type}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {!isCurrent && (
+                            <button
+                              onClick={() => setSelectedFileId(file.id)}
+                              className="flex items-center gap-1 px-2 py-1 text-[10px] text-blue-400 hover:text-white bg-blue-950/50 hover:bg-blue-600 border border-blue-800/50 rounded transition-colors"
+                              title="Load this file into the 3D viewport"
+                            >
+                              <Eye className="w-3 h-3" />
+                              <span>View</span>
+                            </button>
+                          )}
+
+                          {isOwnerOrAdmin && file.is_primary_3d !== 1 && (
+                            <button
+                              onClick={() => handleSetPrimaryFile(file.id)}
+                              className="px-2 py-1 text-[10px] text-neutral-400 hover:text-white bg-[#22222c] hover:bg-[#2c2c38] rounded transition-colors"
+                              title="Set as primary 3D file for thumbnail and default view"
+                            >
+                              Make Primary
+                            </button>
+                          )}
+
+                          <a
+                            href={file.file_path}
+                            download={file.original_name}
+                            className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded transition-colors"
+                            title="Download file"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                          </a>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Collections Block */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2.5">
+                <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                  <FolderPlus className="w-4 h-4 text-blue-400" />
+                  Add to Folder / Collection
+                </h3>
+
+                {model?.collections && model.collections.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1">
+                    <span className="text-[11px] text-neutral-400 self-center">Assigned to:</span>
+                    {model.collections.map((c) => (
+                      <span
+                        key={c.id}
+                        className="px-2 py-0.5 bg-blue-950/60 border border-blue-800/60 text-blue-300 rounded text-[11px]"
+                      >
+                        {c.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <select
+                    value={selectedCollectionToAdd}
+                    onChange={(e) => setSelectedCollectionToAdd(e.target.value)}
+                    className="flex-1 bg-[#141418] border border-[#30303e] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
+                  >
+                    <option value="">Select Folder...</option>
+                    {collections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.parent_folder_id ? `└── ${c.name}` : c.name}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={handleAddToCollection}
+                    disabled={!selectedCollectionToAdd}
+                    className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+                  >
+                    Assign
+                  </button>
+                </div>
+              </div>
+
+              {/* Description & Tags */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-200">Description & Tags</span>
+                  {isOwnerOrAdmin && !isEditing && (
+                    <button
+                      onClick={() => setIsEditing(true)}
+                      className="flex items-center gap-1 text-[11px] text-blue-400 hover:underline"
+                    >
+                      <Edit2 className="w-3 h-3" />
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                {isEditing ? (
+                  <form onSubmit={handleSaveMetadata} className="flex flex-col gap-2 mt-1">
+                    <input
+                      type="text"
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      required
+                      className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <textarea
+                      rows={2}
+                      value={editDesc}
+                      onChange={(e) => setEditDesc(e.target.value)}
+                      placeholder="Description"
+                      className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <input
+                      type="text"
+                      value={editTags}
+                      onChange={(e) => setEditTags(e.target.value)}
+                      placeholder="Tags (comma separated)"
+                      className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
+                    />
+                    <div className="flex items-center justify-end gap-2 mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditing(false)}
+                        className="px-2.5 py-1 text-xs text-neutral-400"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="submit"
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold"
+                      >
+                        Save Changes
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <>
+                    <p className="text-xs text-neutral-300 leading-relaxed">
+                      {model?.description || 'No description provided.'}
+                    </p>
+                    {model?.tags && model.tags.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {model.tags.map((t) => (
+                          <span
+                            key={t}
+                            className="px-2 py-0.5 bg-[#252530] text-neutral-300 text-[10px] rounded font-medium"
+                          >
+                            #{t}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            {model && (
-              <button
-                onClick={handleToggleFavorite}
-                className={`p-2 rounded-lg border transition-all ${
-                  model.is_favorited
-                    ? 'bg-red-500/20 text-red-400 border-red-500/40 hover:bg-red-500/30'
-                    : 'bg-[#22222a] text-neutral-400 border-[#30303c] hover:text-white'
-                }`}
-                title={model.is_favorited ? 'Favorited' : 'Favorite'}
-              >
-                <Heart className={`w-4 h-4 ${model.is_favorited ? 'fill-current text-red-500' : ''}`} />
-              </button>
-            )}
-
-            <button
-              onClick={onClose}
-              className="p-2 text-neutral-400 hover:text-white rounded-lg hover:bg-white/5 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Modal Body: 2 Columns (3D Viewport on Left, Specs & Files on Right) */}
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto">
-          {/* Left Column: 3D Viewport Stage */}
-          <div className="lg:col-span-7 bg-[#121214] flex flex-col relative border-b lg:border-b-0 lg:border-r border-[#252530] min-h-[400px] lg:min-h-[560px]">
-            {/* Viewport Canvas Container */}
-            <div ref={mountRef} className="w-full h-full flex-1 cursor-grab active:cursor-grabbing" />
-
-            {/* Active File Switcher Overlay (Top-Left of 3D Viewport) */}
-            {model && model.files.length > 1 && (
-              <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs shadow-xl">
-                <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1.5 shrink-0">
-                  <Box className="w-3.5 h-3.5 text-blue-400" />
-                  Viewing:
-                </span>
-                <select
-                  value={currentActiveFile?.id || ''}
-                  onChange={(e) => setSelectedFileId(e.target.value)}
-                  className="bg-[#121216] border border-[#35354a] rounded-lg px-2.5 py-1 text-white text-xs outline-none focus:border-blue-500 font-medium max-w-[210px] truncate"
-                >
-                  {model.files.map((file, idx) => (
-                    <option key={file.id} value={file.id}>
-                      {idx + 1}. {file.original_name} {file.is_primary_3d === 1 ? '★ [Primary]' : ''}
-                    </option>
-                  ))}
-                </select>
-                <span className="text-[10px] text-neutral-500 font-mono shrink-0">
-                  {(model.files.findIndex((f) => f.id === currentActiveFile?.id) + 1)}/{model.files.length}
-                </span>
-              </div>
-            )}
-
-            {/* Loading Indicator for mesh swap */}
-            {loadingMesh && (
-              <div className="absolute top-4 right-4 z-20 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs text-blue-400 flex items-center gap-2 shadow-lg">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Loading 3D asset...</span>
-              </div>
-            )}
-
-            {/* Viewport Control Overlay (Bottom Dock) */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-[#1b1b24]/90 backdrop-blur-md border border-[#2e2e3d] rounded-xl shadow-xl text-xs z-10">
-              <button
-                onClick={toggleWireframe}
-                className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                  wireframe ? 'bg-blue-600 text-white' : 'text-neutral-300 hover:bg-[#282834]'
-                }`}
-              >
-                {wireframe ? 'Wireframe: ON' : 'Solid Mesh'}
-              </button>
-
-              <button
-                onClick={resetCamera}
-                className="px-3 py-1.5 text-neutral-300 hover:bg-[#282834] rounded-lg font-medium transition-colors"
-              >
-                Reset Camera
-              </button>
-
-              <div className="h-4 w-px bg-[#303040]" />
-
-              <button
-                onClick={handleSaveThumbnail}
-                disabled={isCapturingThumb}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-sm transition-all"
-                title="Capture this camera angle as the model's 512x512 thumbnail"
-              >
-                <Camera className="w-3.5 h-3.5" />
-                <span>{isCapturingThumb ? 'Saving Angle...' : 'Save as Thumbnail'}</span>
-              </button>
-            </div>
-
-            {saveToast && (
-              <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-950/90 border border-emerald-700/60 text-emerald-200 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 z-30">
-                <Check className="w-4 h-4 text-emerald-400" />
-                <span>{saveToast}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Right Column: Slicing Mesh Analytics & Asset Management */}
-          <div className="lg:col-span-5 p-6 flex flex-col gap-6 overflow-y-auto bg-[#18181f]">
-            {/* Slicing Mesh Analytics Panel for Currently Displayed File */}
-            <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
+              {/* Add Files Block */}
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2.5">
                 <h3 className="text-xs font-bold text-white flex items-center gap-2">
-                  <Scale className="w-4 h-4 text-blue-400" />
-                  Slicing & Mesh Analytics
+                  <FolderPlus className="w-4 h-4 text-blue-400" /> Add Additional Files
                 </h3>
-                <span className="text-[10px] text-neutral-400 font-mono">PLA @ 1.24 g/cm³</span>
-              </div>
 
-              {currentActiveFile && (
-                <div className="text-[11px] text-blue-300 bg-blue-950/40 border border-blue-900/50 rounded-lg px-2.5 py-1 flex items-center gap-1.5 truncate">
-                  <Box className="w-3 h-3 text-blue-400 shrink-0" />
-                  <span className="truncate">Analyzing: <strong>{currentActiveFile.original_name}</strong></span>
-                </div>
-              )}
+                <input
+                  type="file"
+                  multiple
+                  accept=".stl,.3mf,.obj,.zip,.7z"
+                  ref={fileInputRef}
+                  className="hidden"
+                  onChange={handleFileUpload}
+                />
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                {/* Bounding Box Dimensions */}
-                <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
-                  <span className="text-[10px] text-neutral-400">Dimensions (XYZ)</span>
-                  <span className="font-mono font-bold text-white mt-1 tabular-nums">
-                    {meshStats.widthMm} × {meshStats.depthMm} × {meshStats.heightMm}{' '}
-                    <span className="text-[10px] font-normal text-neutral-400">mm</span>
-                  </span>
-                </div>
-
-                {/* Mesh Volume */}
-                <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
-                  <span className="text-[10px] text-neutral-400">Watertight Volume</span>
-                  <span className="font-mono font-bold text-white mt-1 tabular-nums">
-                    {meshStats.volumeCm3}{' '}
-                    <span className="text-[10px] font-normal text-neutral-400">cm³</span>
-                  </span>
-                </div>
-
-                {/* Estimated Weight */}
-                <div className="p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex flex-col">
-                  <span className="text-[10px] text-neutral-400">Est. PLA Weight</span>
-                  <span className="font-mono font-bold text-emerald-400 mt-1 tabular-nums">
-                    ~{meshStats.weightGrams}{' '}
-                    <span className="text-[10px] font-normal text-neutral-400">g</span>
-                  </span>
-                </div>
-
-                {/* Filament Cost Estimate */}
-                <div className="col-span-2 sm:col-span-3 p-2.5 bg-[#141418] rounded-lg border border-[#2a2a35] flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] text-neutral-400 block">Estimated Filament Cost</span>
-                    <span className="font-mono font-bold text-amber-400 text-sm mt-0.5 tabular-nums">
-                      ${meshStats.costUsd.toFixed(2)}{' '}
-                      <span className="text-[10px] font-normal text-neutral-400">USD</span>
-                    </span>
-                  </div>
-
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-[10px] text-neutral-500">Rate:</span>
-                    <div className="flex items-center bg-[#202028] border border-[#353545] rounded px-1.5 py-0.5">
-                      <span className="text-neutral-400 text-xs">$</span>
-                      <input
-                        type="number"
-                        min="1"
-                        max="200"
-                        step="1"
-                        value={filamentPriceKg}
-                        onChange={(e) => setFilamentPriceKg(Number(e.target.value))}
-                        className="w-10 bg-transparent text-white text-xs font-mono outline-none text-right pl-0.5"
-                      />
-                      <span className="text-neutral-400 text-[10px]">/kg</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Extracted Files List with Instant Switcher & Primary Toggles */}
-            <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-white flex items-center gap-2">
-                  <FileCode className="w-4 h-4 text-blue-400" />
-                  Model Files ({model?.files.length || 0})
-                </h3>
-                <span className="text-[11px] text-neutral-400">Click any file to view in 3D</span>
-              </div>
-
-              <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
-                {model?.files.map((file) => {
-                  const isCurrent = file.id === currentActiveFile?.id;
-                  return (
-                    <div
-                      key={file.id}
-                      onClick={() => setSelectedFileId(file.id)}
-                      className={`flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer transition-all border ${
-                        isCurrent
-                          ? 'bg-blue-950/30 border-blue-500/60 shadow-sm shadow-blue-950/30'
-                          : 'bg-[#141418] hover:bg-[#1a1a22] border-[#2a2a35] hover:border-[#38384a]'
-                      }`}
-                    >
-                      <div className="truncate mr-2">
-                        <div className="flex items-center gap-1.5 truncate">
-                          <span
-                            className={`font-semibold truncate ${
-                              isCurrent ? 'text-blue-300' : 'text-neutral-200'
-                            }`}
-                          >
-                            {file.original_name}
-                          </span>
-
-                          {file.is_primary_3d === 1 && (
-                            <span className="flex items-center gap-1 px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded text-[9px] font-mono shrink-0">
-                              <Star className="w-2.5 h-2.5 fill-current" />
-                              PRIMARY
-                            </span>
-                          )}
-
-                          {isCurrent && (
-                            <span className="flex items-center gap-1 px-1.5 py-0.2 bg-blue-600/30 text-blue-400 border border-blue-500/40 rounded text-[9px] font-mono shrink-0">
-                              <Eye className="w-2.5 h-2.5" />
-                              VIEWING
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-neutral-500 font-mono">
-                          {(file.file_size / 1024 / 1024).toFixed(2)} MB · {file.mime_type}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
-                        {!isCurrent && (
-                          <button
-                            onClick={() => setSelectedFileId(file.id)}
-                            className="flex items-center gap-1 px-2 py-1 text-[10px] text-blue-400 hover:text-white bg-blue-950/50 hover:bg-blue-600 border border-blue-800/50 rounded transition-colors"
-                            title="Load this file into the 3D viewport"
-                          >
-                            <Eye className="w-3 h-3" />
-                            <span>View</span>
-                          </button>
-                        )}
-
-                        {isOwnerOrAdmin && file.is_primary_3d !== 1 && (
-                          <button
-                            onClick={() => handleSetPrimaryFile(file.id)}
-                            className="px-2 py-1 text-[10px] text-neutral-400 hover:text-white bg-[#22222c] hover:bg-[#2c2c38] rounded transition-colors"
-                            title="Set as primary 3D file for thumbnail and default view"
-                          >
-                            Make Primary
-                          </button>
-                        )}
-
-                        <a
-                          href={file.file_path}
-                          download={file.original_name}
-                          className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded transition-colors"
-                          title="Download file"
-                        >
-                          <Download className="w-3.5 h-3.5" />
-                        </a>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Collection Assignment */}
-            <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2.5">
-              <h3 className="text-xs font-bold text-white flex items-center gap-2">
-                <FolderPlus className="w-4 h-4 text-blue-400" />
-                Add to Folder / Collection
-              </h3>
-
-              {model?.collections && model.collections.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mb-1">
-                  <span className="text-[11px] text-neutral-400 self-center">Assigned to:</span>
-                  {model.collections.map((c) => (
-                    <span
-                      key={c.id}
-                      className="px-2 py-0.5 bg-blue-950/60 border border-blue-800/60 text-blue-300 rounded text-[11px]"
-                    >
-                      {c.name}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-center gap-2">
-                <select
-                  value={selectedCollectionToAdd}
-                  onChange={(e) => setSelectedCollectionToAdd(e.target.value)}
-                  className="flex-1 bg-[#141418] border border-[#30303e] rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
-                >
-                  <option value="">Select Folder...</option>
-                  {collections.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.parent_folder_id ? `└── ${c.name}` : c.name}
-                    </option>
-                  ))}
-                </select>
                 <button
-                  onClick={handleAddToCollection}
-                  disabled={!selectedCollectionToAdd}
-                  className="px-3 py-1.5 text-xs font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 rounded-lg transition-colors whitespace-nowrap"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={loading}
+                  className="flex items-center gap-1.5 px-5 py-2 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg justify-center transition-colors"
                 >
-                  Assign
+                  <Upload className="w-4 h-4" /> Add Files
                 </button>
               </div>
-            </div>
 
-            {/* Description & Tags */}
-            <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-neutral-200">Description & Tags</span>
-                {isOwnerOrAdmin && !isEditing && (
+              {/* Danger Zone */}
+              {isOwnerOrAdmin && (
+                <div className="pt-2 flex justify-end">
                   <button
-                    onClick={() => setIsEditing(true)}
-                    className="flex items-center gap-1 text-[11px] text-blue-400 hover:underline"
+                    onClick={handleDeleteModel}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/60 border border-red-900/50 rounded-lg transition-colors"
                   >
-                    <Edit2 className="w-3 h-3" />
-                    Edit
+                    <Trash2 className="w-3.5 h-3.5" />
+                    Delete Model Asset
                   </button>
-                )}
-              </div>
-
-              {isEditing ? (
-                <form onSubmit={handleSaveMetadata} className="flex flex-col gap-2 mt-1">
-                  <input
-                    type="text"
-                    value={editTitle}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                    required
-                    className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
-                  />
-                  <textarea
-                    rows={2}
-                    value={editDesc}
-                    onChange={(e) => setEditDesc(e.target.value)}
-                    placeholder="Description"
-                    className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
-                  />
-                  <input
-                    type="text"
-                    value={editTags}
-                    onChange={(e) => setEditTags(e.target.value)}
-                    placeholder="Tags (comma separated)"
-                    className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
-                  />
-                  <div className="flex items-center justify-end gap-2 mt-1">
-                    <button
-                      type="button"
-                      onClick={() => setIsEditing(false)}
-                      className="px-2.5 py-1 text-xs text-neutral-400"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold"
-                    >
-                      Save Changes
-                    </button>
-                  </div>
-                </form>
-              ) : (
-                <>
-                  <p className="text-xs text-neutral-300 leading-relaxed">
-                    {model?.description || 'No description provided.'}
-                  </p>
-                  {model?.tags && model.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {model.tags.map((t) => (
-                        <span
-                          key={t}
-                          className="px-2 py-0.5 bg-[#252530] text-neutral-300 text-[10px] rounded font-medium"
-                        >
-                          #{t}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </>
+                </div>
               )}
             </div>
-
-            {/* Danger Zone: Delete Model */}
-            {isOwnerOrAdmin && (
-              <div className="pt-2 flex justify-end">
-                <button
-                  onClick={handleDeleteModel}
-                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/60 border border-red-900/50 rounded-lg transition-colors"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete Model Asset
-                </button>
-              </div>
-            )}
           </div>
         </div>
       </div>
-    </div>
+    </ErrorBoundary>
   );
 };
+
+export default ModelViewerModal;

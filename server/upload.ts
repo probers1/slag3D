@@ -1,11 +1,74 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import StreamZip from 'node-stream-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
 
+const execAsync = promisify(exec);
+
+// Allowed file extensions (3D models and safe archives)
+const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
+
+// Dangerous indicators in filenames to block
+const SUSPICIOUS_PATTERNS = [
+  'script', 'exe', 'bat', 'cmd', 'ps1',
+  'html', 'htm', 'js', 'vbs', 'sh',
+  'bash', 'bin', 'py', 'pl'
+];
+
+// 2D image extensions (for rejection)
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
+
+/**
+ * Validate an uploaded file with security checks and descriptive errors
+ */
+function validateFile(file: Express.Multer.File): { valid: boolean; error?: Error } {
+  const originalName = file.originalname;
+  const ext = path.extname(originalName).toLowerCase().replace(/^\.+/, '');
+
+  // Handle files without extension
+  if (ext === '') {
+    console.error(`[UPLOAD SECURITY] Rejected file without extension: ${originalName}`);
+    return { valid: false, error: new Error(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+  }
+
+  // Reject image files
+  if (IMAGE_EXTENSIONS.includes(ext)) {
+    console.error(`[UPLOAD SECURITY] Image file rejected: ${originalName}`);
+    return { valid: false, error: new Error(`Image file (.${ext}) is not allowed for 3D models. Supported formats: .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+  }
+
+  // Check extension against allowlist
+  if (!ALLOWED_EXTENSIONS.includes('.' + ext)) {
+    console.error(`[UPLOAD SECURITY] Unsupported extension: ${ext} in ${originalName}`);
+    return { valid: false, error: new Error(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
+  }
+
+  // Additional checks for archives (.zip, .7z) with suspicious names
+  if (ext === 'zip' || ext === '7z') {
+    const lowerName = originalName.toLowerCase();
+    if (SUSPICIOUS_PATTERNS.some(pattern => lowerName.includes(pattern))) {
+      console.error(`[UPLOAD SECURITY] Blocked suspicious archive: ${originalName}`);
+      return { valid: false, error: new Error(`File ${originalName}: Suspicious archive name contains security-related keywords. Only clean 3D model archives are allowed.`) };
+    }
+    
+    // Check for embedded executables in ZIP
+    if (['executable', 'script', 'bat', 'cmd'].some(pattern => lowerName.includes(pattern))) {
+      console.error(`[UPLOAD SECURITY] Rejected executable-like archive: ${originalName}`);
+      return { valid: false, error: new Error(`File ${originalName}: Archives containing executables or scripts are not allowed.`) };
+    }
+  }
+
+  return { valid: true };
+}
+
+/**
+ * Create multer storage configuration with validation
+ */
 const uploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
     const tmpDir = path.resolve(process.cwd(), 'uploads', 'tmp');
@@ -14,24 +77,30 @@ const uploadStorage = multer.diskStorage({
     }
     cb(null, tmpDir);
   },
+  
   filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${uuidv4()}${ext}`);
+    // Validate before accepting
+    const validation = validateFile(file);
+    
+    if (!validation.valid) {
+      // Return error via callback for proper HTTP response handling
+      return cb(new Error(validation.error?.message || `Invalid file type for upload: ${file.originalname}`), null as any);
+    }
+    
+    // Generate unique filename with extension
+    const finalExt = path.extname(file.originalname).toLowerCase();
+    cb(null, `${uuidv4()}${finalExt}`);
   },
 });
 
+/**
+ * Multer middleware for file uploads
+ */
 export const uploadMiddleware = multer({
   storage: uploadStorage,
   limits: { fileSize: 300 * 1024 * 1024 }, // 300MB
-  fileFilter: (req, file, cb) => {
-    const allowedExts = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedExts.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`Unsupported file format ${ext}. Allowed formats: .stl, .3mf, .obj, .zip, .7z`));
-    }
-  },
+  
+  // File filter is optional - we handle validation in filename callback
 });
 
 interface ExtractedFileInfo {
@@ -44,7 +113,11 @@ interface ExtractedFileInfo {
   is_primary_3d: number;
 }
 
-export async function processModelFiles(modelId: string, uploadedFiles: Express.Multer.File[]): Promise<ExtractedFileInfo[]> {
+export async function processModelFiles(
+  modelId: string,
+  uploadedFiles: Express.Multer.File[],
+  options: { isSupplementary?: boolean } = {}
+): Promise<ExtractedFileInfo[]> {
   const modelDir = path.resolve(process.cwd(), 'uploads', 'models', modelId);
   if (!fs.existsSync(modelDir)) {
     fs.mkdirSync(modelDir, { recursive: true });
@@ -68,6 +141,15 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
           const baseName = path.basename(entry.name);
           // Skip hidden / macOS metadata files
           if (baseName.startsWith('.') || entry.name.includes('__MACOSX')) continue;
+
+          // Security: Check for dangerous file types in extracted contents
+          const lowerEntry = entry.name.toLowerCase();
+          const dangerousEntryPatterns = ['.exe', '.bat', '.cmd', '.ps1', '.sh', '.py', '.pl', 'executable', 'script'];
+          
+          if (dangerousEntryPatterns.some(pattern => lowerEntry.includes(pattern))) {
+            console.warn(`[UPLOAD SECURITY] Skipping dangerous archive entry: ${entry.name}`);
+            continue;
+          }
 
           const destPath = path.join(modelDir, `${uuidv4()}_${baseName}`);
           await zip.extract(entry.name, destPath);
@@ -93,6 +175,47 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
         // Clean up temporary uploaded zip
         try { fs.unlinkSync(file.path); } catch {}
       }
+    } else if (ext === '.7z') {
+      // Extract 7z archive using system 7z binary (p7zip) — mirrors the .zip extraction flow
+      const tempDir = fs.mkdtempSync(path.join(path.resolve(process.cwd(), 'uploads', 'tmp'), '7z-XXXXXX'));
+      const archiveCopy = path.join(tempDir, 'archive.7z');
+      fs.copyFileSync(file.path, archiveCopy);
+      try {
+        await execAsync(`7z x -y "${archiveCopy}" -o"${tempDir}"`);
+
+        const extractedEntries = (fs.readdirSync(tempDir, { recursive: true }) as string[])
+          .map((f) => path.join(tempDir, f))
+          .filter((p: string) => {
+            try {
+              return fs.statSync(p).isFile() && ['.stl', '.3mf', '.obj'].includes(path.extname(p).toLowerCase());
+            } catch {
+              return false;
+            }
+          });
+
+        for (const p of extractedEntries) {
+          const destName = `${uuidv4()}_${path.basename(p)}`;
+          const destPath = path.join(modelDir, destName);
+          fs.copyFileSync(p, destPath);
+          const stat = fs.statSync(destPath);
+          const entryExt = path.extname(p).toLowerCase();
+          const mimeType = entryExt === '.stl' ? 'model/stl' : entryExt === '.3mf' ? 'model/3mf' : entryExt === '.obj' ? 'model/obj' : 'application/octet-stream';
+          processedFiles.push({
+            id: uuidv4(),
+            filename: destName,
+            original_name: path.basename(p),
+            mime_type: mimeType,
+            file_size: stat.size,
+            file_path: `/uploads/models/${modelId}/${destName}`,
+            is_primary_3d: 0,
+          });
+        }
+      } catch (err) {
+        console.error(`Error extracting 7z file ${file.originalname}:`, err);
+      } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+        try { fs.unlinkSync(file.path); } catch {}
+      }
     } else {
       // Direct 3D model file (.stl, .obj, .3mf) or other
       const destFilename = `${uuidv4()}_${file.originalname}`;
@@ -113,16 +236,18 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
     }
   }
 
-  // Identify 3D files (.stl, .3mf, .obj) and designate largest as primary
-  const model3dFiles = processedFiles.filter((f) => {
-    const ext = path.extname(f.original_name).toLowerCase();
-    return ['.stl', '.3mf', '.obj'].includes(ext);
-  });
+  // Identify 3D files (.stl, .3mf, .obj) and designate largest as primary (initial upload only)
+  if (!options.isSupplementary) {
+    const model3dFiles = processedFiles.filter((f) => {
+      const ext = path.extname(f.original_name).toLowerCase();
+      return ['.stl', '.3mf', '.obj'].includes(ext);
+    });
 
-  if (model3dFiles.length > 0) {
-    // Sort descending by file_size
-    model3dFiles.sort((a, b) => b.file_size - a.file_size);
-    model3dFiles[0].is_primary_3d = 1;
+    if (model3dFiles.length > 0) {
+      // Sort descending by file_size
+      model3dFiles.sort((a, b) => b.file_size - a.file_size);
+      model3dFiles[0].is_primary_3d = 1;
+    }
   }
 
   // Insert all file records into database
@@ -135,16 +260,18 @@ export async function processModelFiles(modelId: string, uploadedFiles: Express.
     insertStmt.run(pf.id, modelId, pf.filename, pf.original_name, pf.mime_type, pf.file_size, pf.file_path, pf.is_primary_3d);
   }
 
-  // Queue thumbnail render for primary 3D file
-  const primary = processedFiles.find((f) => f.is_primary_3d === 1);
-  if (primary) {
-    const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-    const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
-    enqueueThumbnailRender({
-      modelId,
-      filePath: relativeOrAbs,
-      fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
-    });
+  // Queue thumbnail render for primary 3D file (initial upload only)
+  if (!options.isSupplementary) {
+    const primary = processedFiles.find((f) => f.is_primary_3d === 1);
+    if (primary) {
+      const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
+      const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
+      enqueueThumbnailRender({
+        modelId,
+        filePath: relativeOrAbs,
+        fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+      });
+    }
   }
 
   return processedFiles;

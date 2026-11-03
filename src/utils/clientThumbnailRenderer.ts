@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { apiFetch } from './api';
+import { apiFetch, getStoredToken } from './api';
 
 // Cache of model IDs currently being processed client-side to prevent duplicates
 const renderingQueue = new Set<string>();
@@ -94,8 +94,13 @@ export async function renderThumbnailInBrowser(
       material.dispose();
     };
 
+    const storedAuthToken = getStoredToken();
+
     if (ext === 'stl') {
       const loader = new STLLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       const geometry = await loader.loadAsync(filePath);
       geometry.computeVertexNormals();
       const mesh = new THREE.Mesh(geometry, material);
@@ -103,6 +108,9 @@ export async function renderThumbnailInBrowser(
       geometry.dispose();
     } else if (ext === 'obj') {
       const loader = new OBJLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
       const obj = await loader.loadAsync(filePath);
       obj.traverse((child) => {
         if ((child as THREE.Mesh).isMesh) {

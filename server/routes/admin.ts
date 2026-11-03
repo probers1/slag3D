@@ -3,13 +3,14 @@ import bcrypt from 'bcryptjs';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from '../db.ts';
 import { requireAdmin } from '../middleware.ts';
+import { validatePasswordStrength } from '../lib/passwordValidation.ts';
 
 const router = Router();
 router.use(requireAdmin);
 
 // GET /api/admin/users
 router.get('/users', (req, res) => {
-  const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at ASC').all();
+  const users = db.prepare('SELECT id, username, role, created_at, is_deleted FROM users WHERE is_deleted = 0 ORDER BY created_at ASC').all();
   res.json({ users });
 });
 
@@ -25,8 +26,8 @@ router.post('/users', (req, res) => {
     return res.status(400).json({ error: 'Username must be at least 3 characters long' });
   }
 
-  if (password.length < 6) {
-    return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+  if (!validatePasswordStrength(password)) {
+    return res.status(400).json({ error: 'Password must be at least 12 characters, include one uppercase letter and one number' });
   }
 
   const userRole = role === 'admin' ? 'admin' : 'user';
@@ -54,8 +55,8 @@ router.put('/users/:id/reset-password', (req, res) => {
   const { id } = req.params;
   const { newPassword } = req.body;
 
-  if (!newPassword || newPassword.length < 6) {
-    return res.status(400).json({ error: 'New password must be at least 6 characters long' });
+  if (!validatePasswordStrength(newPassword)) {
+    return res.status(400).json({ error: 'New password must be at least 12 characters, include one uppercase letter and one number' });
   }
 
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
@@ -66,24 +67,67 @@ router.put('/users/:id/reset-password', (req, res) => {
   const hash = bcrypt.hashSync(newPassword, 10);
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hash, id);
 
+  // Invalidate all refresh tokens issued to this user after a password reset
+  db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+
   res.json({ message: 'User password reset successfully' });
 });
 
-// DELETE /api/admin/users/:id
+// DELETE /api/admin/users/:id — Soft delete users to prevent data loss
 router.delete('/users/:id', (req, res) => {
   const { id } = req.params;
+  const currentAdminId = req.userId || req.session?.userId;
 
-  if (id === req.session.userId) {
-    return res.status(400).json({ error: 'You cannot delete your own administrator account' });
+  if (id === currentAdminId) {
+    return res.status(400).json({ error: 'You cannot delete your own account' });
   }
 
-  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id) as { id: string; username: string } | undefined;
-  if (!user) {
+  const targetUser = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id) as { id: string; role: string } | undefined;
+  if (!targetUser) {
     return res.status(404).json({ error: 'User not found' });
   }
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  res.json({ message: `User ${user.username} deleted successfully` });
+  // Prevent deleting the last remaining active administrator
+  if (targetUser.role === 'admin') {
+    const adminCountRow = db.prepare(`SELECT COUNT(*) as count FROM users WHERE role = 'admin' AND (is_deleted = 0 OR is_deleted IS NULL)`).get() as { count: number };
+    if (adminCountRow.count <= 1) {
+      return res.status(400).json({ error: 'Cannot delete the last remaining administrator account' });
+    }
+  }
+  
+  // Update soft-delete flag and timestamp if available
+  const userColumns = (db.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>).map((c) => c.name);
+  const updateSql = userColumns.includes('deleted_at')
+    ? `UPDATE users SET is_deleted = 1, deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND is_deleted = 0`
+    : `UPDATE users SET is_deleted = 1 WHERE id = ? AND is_deleted = 0`;
+
+  const deletedRows = db.prepare(updateSql).run(id);
+  
+  if (deletedRows.changes === 0) {
+    return res.status(404).json({ error: 'User already deleted or not found' });
+  }
+
+  // Invalidate any active refresh tokens for the soft-deleted user
+  try {
+    db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(id);
+  } catch (tokenErr: any) {
+    console.warn('[ADMIN] Failed to clear auth tokens for soft-deleted user:', tokenErr?.message);
+  }
+
+  // Check orphaned models belonging to deleted user
+  try {
+    const modelsToArchive = db.prepare(`
+      SELECT id, title FROM models WHERE user_id = ?
+    `).all(id);
+
+    if (modelsToArchive.length > 0) {
+      console.log(`[DATA CLEANUP] ${modelsToArchive.length} models belong to deleted user ${id}. Data retained for recovery.`);
+    }
+  } catch (err: any) {
+    console.warn('[ADMIN] Cleanup warning:', err?.message);
+  }
+
+  res.json({ message: `User soft-deleted successfully` });
 });
 
 export default router;

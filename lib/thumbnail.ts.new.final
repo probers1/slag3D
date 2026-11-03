@@ -1,0 +1,16 @@
+        // Capture screenshot  
+        await page.screenshot({ path: outputPath + ".tmp", type: "png", fullPage: false, omitBackground: true });
+
+        fs.renameSync(outputPath + ".tmp", outputPath);
+        return publicThumbnailPath;
+      
+      } catch (pageErr) {
+        lastError = pageErr as Error;
+        console.warn(`[Thumbnail] Page failed at attempt ${config.attempt}: ${(pageErr as Error).message}`);
+        if (!/(timeout|memory|allocation)/i.test((pageErr as Error).message)) {
+          throw new Error(`Permanent render failure: ${(pageErr as Error).message}`);
+        }
+      } finally {
+        try { await browser.close(); } catch {}\n    }\n  \n  if (lastError) throw lastError;\n  throw new Error(`All attempts failed for model ${modelId}`);\n};\n\n` + threeScript);
+
+EOFTHUMBNAIL
