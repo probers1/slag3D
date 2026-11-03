@@ -99,9 +99,19 @@ install_dependencies() {
       libxrandr2 libpango-1.0-0 libcairo2 dnsutils
 }
 
-# 4. Install Node.js v20 LTS
+# 4. Install Node.js v22 LTS (upgrade from v20 if detected)
 install_nodejs() {
-    log_info "Installing Node.js v20 LTS..."
+    log_info "Checking and installing Node.js v22 LTS..."
+
+    # Get current node version
+    local CURRENT_VERSION=""
+    if command -v node >/dev/null 2>&1; then
+        CURRENT_VERSION=$(node -v | cut -d'.' -f1)
+        if [[ "$CURRENT_VERSION" == "v18"* || "$CURRENT_VERSION" == "v17"* || "$CURRENT_VERSION" == "v16"* ]]; then
+            # Old version detected, force upgrade to v22
+            log_warn "Detected Node.js ${CURRENT_VERSION} - upgrading to v22 LTS (required)"
+        fi
+    fi
 
     if ! command -v node >/dev/null 2>&1 || [ "$(node -v | cut -d'.' -f1)" != "v22" ]; then
         log_info "Setting up NodeSource repository for Node.js v22 LTS..."
