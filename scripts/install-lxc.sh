@@ -268,6 +268,8 @@ build_application() {
     log_info "Building production frontend assets..."
     cd "${APP_DIR}/"
     NODE_PATH="${APP_DIR}/node_modules/.bin:"
+    # Set PATH for vite
+    PATH="${APP_DIR}/*/node_modules.*bin:${PATH}"
     npm run build || {
         log_error "Build failed! Check npm errors above."
         exit 1
