@@ -178,9 +178,9 @@ deploy_application() {
 
     cd "${APP_DIR}"
 
-    # Install dependencies with explicit native script authorization
-    log_info "Installing dependencies (allowing native build scripts)..."
-    npm ci --allow-scripts || npm install --allow-scripts
+    # Install dependencies (npm respects allowScripts in package.json)
+    log_info "Installing dependencies..."
+    npm ci || npm install
 
     log_info "Building production client and server bundles..."
     npm run build
@@ -313,7 +313,7 @@ if [ "${1:-}" = "--update" ] && [ -f "/opt/slag3D/package.json" ]; then
     log_info "Updating SLAG3D installation..."
     cd /opt/slag3D
     git pull 2>/dev/null || true
-    npm ci --allow-scripts || npm install --allow-scripts
+    npm ci || npm install
     npm run build
     npm prune --omit=dev
     rm -rf ~/.npm ~/.cache

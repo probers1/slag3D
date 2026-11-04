@@ -3,6 +3,12 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "allowScripts": {
+    "better-sqlite3": true,
+    "esbuild": true,
+    "puppeteer": true,
+    "sqlite3": true
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build:client": "vite build",
