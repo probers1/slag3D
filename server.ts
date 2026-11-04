@@ -6,11 +6,11 @@ import session from 'express-session';
 import rateLimit from 'express-rate-limit';
 import SqliteStoreInit from 'express-session-better-sqlite3';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 // Import database and types after other code (to avoid circular deps)
 import { initDatabase, db } from './server/db.ts';
+import { UPLOADS_DIR, ensureUploadsDirs, migrateLegacyUploads } from './server/paths.ts';
 
 // Import Middleware & Routers
 import { authResolverMiddleware, csrfProtection } from './server/middleware.ts';
@@ -114,12 +114,10 @@ const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// Ensure upload directories exist
-const uploadDir = path.resolve(__dirname, 'uploads');
-const thumbDir = path.resolve(uploadDir, 'thumbnails');
-if (!fs.existsSync(thumbDir)) {
-  fs.mkdirSync(thumbDir, { recursive: true });
-}
+// Ensure upload directories exist (uploads/models, uploads/thumbnails, uploads/tmp)
+ensureUploadsDirs();
+// Pick up files written to the legacy location before switching UPLOADS_DIR
+migrateLegacyUploads();
 
 app.set('trust proxy', 1);
 
@@ -159,7 +157,14 @@ app.use('/uploads', (req, res, next) => {
     return next();
   }
   return res.status(401).json({ error: 'Authentication required' });
-}, express.static(uploadDir));
+}, express.static(UPLOADS_DIR));
+
+// A missing upload must never fall through to the SPA fallback: the client
+// would receive index.html instead of the binary model file and fail with
+// confusing parser errors (e.g. "Invalid typed array length" for STL).
+app.use('/uploads', (req, res) => {
+  res.status(404).json({ error: 'File not found' });
+});
 
 // =============================================================================
 // API ROUTES & RATE LIMITING

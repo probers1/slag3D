@@ -11,6 +11,8 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
+      # Uploads and thumbnails live on the mounted volume, not inside the image
+      - UPLOADS_DIR=/uploads
       # Values are read from the .env file next to this compose file.
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
       - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET:?REFRESH_TOKEN_SECRET must be set in .env}

@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 import fs from 'fs';
 import { db } from '../db.ts';
+import { MODELS_DIR, THUMBNAILS_DIR, resolveUploadsPath } from '../paths.ts';
 import { requireAuth } from '../middleware.ts';
 import { uploadMiddleware, processModelFiles } from '../upload.ts';
 import { enqueueThumbnailRender } from '../../lib/queue.ts';
@@ -252,7 +253,7 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
     // Clean up ONLY the specific model record and files if processing failed midway
     if (createdModelId) {
       try {
-        const dir = path.resolve(process.cwd(), 'uploads', 'models', createdModelId);
+        const dir = path.join(MODELS_DIR, createdModelId);
         if (fs.existsSync(dir)) {
           fs.rmSync(dir, { recursive: true, force: true });
         }
@@ -393,7 +394,7 @@ router.delete('/:id', (req, res) => {
   }
 
   // 1. Purge model files directory
-  const modelDir = path.resolve(process.cwd(), 'uploads', 'models', id);
+  const modelDir = path.join(MODELS_DIR, id);
   try {
     if (fs.existsSync(modelDir)) {
       fs.rmSync(modelDir, { recursive: true, force: true });
@@ -403,7 +404,7 @@ router.delete('/:id', (req, res) => {
   }
 
   // 2. Purge cached thumbnail
-  const thumbPath = path.resolve(process.cwd(), 'uploads', 'thumbnails', `${id}.png`);
+  const thumbPath = path.join(THUMBNAILS_DIR, `${id}.png`);
   try {
     if (fs.existsSync(thumbPath)) {
       fs.unlinkSync(thumbPath);
@@ -470,7 +471,7 @@ router.post('/:id/regenerate-thumbnail', (req, res) => {
   }
 
   const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-  const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
+  const relativeOrAbs = resolveUploadsPath(primary.file_path);
 
   enqueueThumbnailRender({
     modelId: id,
@@ -508,7 +509,7 @@ router.post('/:id/thumbnail-client', (req, res) => {
     const base64Data = imageBase64.split(';base64,').pop();
     const buffer = Buffer.from(base64Data, 'base64');
 
-    const thumbDir = path.resolve(process.cwd(), 'uploads', 'thumbnails');
+    const thumbDir = THUMBNAILS_DIR;
     if (!fs.existsSync(thumbDir)) {
       fs.mkdirSync(thumbDir, { recursive: true });
     }
@@ -573,7 +574,7 @@ router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), as
 
         // Re-queue thumbnail render for the newly designated primary 3D file
         const primaryExt = path.extname(largestNew.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-        const relativeOrAbs = path.resolve(process.cwd(), largestNew.file_path.replace(/^\//, ''));
+        const relativeOrAbs = resolveUploadsPath(largestNew.file_path);
         enqueueThumbnailRender({
           modelId: id,
           filePath: relativeOrAbs,

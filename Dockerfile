@@ -3,6 +3,7 @@ FROM node:20-bookworm-slim
 # Set environment variables
 ENV NODE_ENV=production \
     PORT=3000 \
+    UPLOADS_DIR=/uploads \
     PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 

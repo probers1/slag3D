@@ -1,12 +1,16 @@
 import path from "path";
 import fs from "fs";
 import puppeteer from "puppeteer";
+import { THUMBNAILS_DIR, THREE_BUNDLE_PATH, resolveUploadsPath } from "../server/paths.ts";
 
 export interface RenderJobData { modelId: string; filePath: string; fileType: "stl" | "obj" | "3mf"; }
 
 function getThreeBundle() {
-  const b = path.resolve(process.cwd(), "lib", "three-bundle.js");
-  return fs.existsSync(b) ? fs.readFileSync(b, "utf-8") : "";
+  const candidates = [THREE_BUNDLE_PATH, path.resolve(process.cwd(), "lib", "three-bundle.js")];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return fs.readFileSync(candidate, "utf-8");
+  }
+  return "";
 }
 
 const DEFAULT_TIMEOUT = 60000;
@@ -75,12 +79,12 @@ function buildModelScript(filePath: string): string {
 }
 
 export async function renderModelThumbnail({ modelId, filePath }: any): Promise<string> {
-    const outputDir = path.resolve(process.cwd(), "uploads", "thumbnails");
+    const outputDir = THUMBNAILS_DIR;
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
     const outputPath = path.resolve(outputDir, `${modelId}.png`);
     const publicPath = `/uploads/thumbnails/${modelId}.png`;
-    const fullPath = path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
+    const fullPath = path.isAbsolute(filePath) ? filePath : resolveUploadsPath(filePath);
 
     if (!fs.existsSync(fullPath)) throw new Error(`File not found at ${fullPath}`);
 

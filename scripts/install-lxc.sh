@@ -149,7 +149,7 @@ install_dependencies() {
 setup_configuration() {
     log_info "Configuring storage directories..."
 
-    mkdir -p "${DATA_DIR}" "${UPLOADS_DIR}/thumbnails" "${UPLOADS_DIR}/models" "${UPLOADS_DIR}/tmp"
+    mkdir -p "${DATA_DIR}"
 
     # Database migration check
     local OLD_DB_PATH="/opt/slag3d/data/vault.db"
@@ -196,6 +196,9 @@ GOOSE_SEED_DB=true
 SESSION_EXPIRY_MINUTES=1440
 ADMIN_USER=admin
 ADMIN_PASSWORD="${ADMIN_PASSWORD}"
+
+# Storage location for uploaded models and rendered thumbnails.
+UPLOADS_DIR="${UPLOADS_DIR}"
 ENDOFENV
 
         chmod 600 "${ENV_FILE}"
@@ -215,11 +218,20 @@ ENDOFENV
             printf '\nADMIN_PASSWORD="%s"\n' "$NEW_ADMIN_PASSWORD" >> "$ENV_FILE"
             log_success "Generated Admin Password: ${NEW_ADMIN_PASSWORD}"
         fi
+
+        if ! grep -q '^UPLOADS_DIR=' "$ENV_FILE"; then
+            printf '\nUPLOADS_DIR="%s"\n' "$UPLOADS_DIR" >> "$ENV_FILE"
+            log_info "Added UPLOADS_DIR=${UPLOADS_DIR} to ${ENV_FILE}"
+        fi
     fi
 
-    # Credentials that must work after installation
+    # Credentials and paths that must be used after installation
     ADMIN_USER=$(read_env_value "ADMIN_USER" "$ENV_FILE" "admin")
     ADMIN_PASSWORD=$(read_env_value "ADMIN_PASSWORD" "$ENV_FILE" "")
+    UPLOADS_DIR=$(read_env_value "UPLOADS_DIR" "$ENV_FILE" "${APP_DIR}/uploads")
+
+    mkdir -p "${UPLOADS_DIR}/thumbnails" "${UPLOADS_DIR}/models" "${UPLOADS_DIR}/tmp"
+    log_success "Uploads directory: ${UPLOADS_DIR}"
 }
 
 # 5. Deploy application files & post-build pruning
@@ -292,6 +304,7 @@ TimeoutStopSec=30
 Environment=NODE_ENV=production
 Environment=PORT=3000
 Environment=DB_PATH=${DATA_DIR}/vault.db
+Environment=UPLOADS_DIR=${UPLOADS_DIR}
 Environment=PUPPETEER_FORCE_CHROMIUM_PATH=/usr/bin/chromium
 Environment=PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 Environment=PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true

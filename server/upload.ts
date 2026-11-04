@@ -6,6 +6,7 @@ import { promisify } from 'util';
 import StreamZip from 'node-stream-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db.ts';
+import { MODELS_DIR, TMP_UPLOADS_DIR, resolveUploadsPath } from './paths.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
 
 const execAsync = promisify(exec);
@@ -71,11 +72,10 @@ function validateFile(file: Express.Multer.File): { valid: boolean; error?: Erro
  */
 const uploadStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const tmpDir = path.resolve(process.cwd(), 'uploads', 'tmp');
-    if (!fs.existsSync(tmpDir)) {
-      fs.mkdirSync(tmpDir, { recursive: true });
+    if (!fs.existsSync(TMP_UPLOADS_DIR)) {
+      fs.mkdirSync(TMP_UPLOADS_DIR, { recursive: true });
     }
-    cb(null, tmpDir);
+    cb(null, TMP_UPLOADS_DIR);
   },
   
   filename: (req, file, cb) => {
@@ -118,7 +118,7 @@ export async function processModelFiles(
   uploadedFiles: Express.Multer.File[],
   options: { isSupplementary?: boolean } = {}
 ): Promise<ExtractedFileInfo[]> {
-  const modelDir = path.resolve(process.cwd(), 'uploads', 'models', modelId);
+  const modelDir = path.join(MODELS_DIR, modelId);
   if (!fs.existsSync(modelDir)) {
     fs.mkdirSync(modelDir, { recursive: true });
   }
@@ -177,7 +177,7 @@ export async function processModelFiles(
       }
     } else if (ext === '.7z') {
       // Extract 7z archive using system 7z binary (p7zip) — mirrors the .zip extraction flow
-      const tempDir = fs.mkdtempSync(path.join(path.resolve(process.cwd(), 'uploads', 'tmp'), '7z-XXXXXX'));
+      const tempDir = fs.mkdtempSync(path.join(TMP_UPLOADS_DIR, '7z-XXXXXX'));
       const archiveCopy = path.join(tempDir, 'archive.7z');
       fs.copyFileSync(file.path, archiveCopy);
       try {
@@ -265,7 +265,7 @@ export async function processModelFiles(
     const primary = processedFiles.find((f) => f.is_primary_3d === 1);
     if (primary) {
       const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-      const relativeOrAbs = path.resolve(process.cwd(), primary.file_path.replace(/^\//, ''));
+      const relativeOrAbs = resolveUploadsPath(primary.file_path);
       enqueueThumbnailRender({
         modelId,
         filePath: relativeOrAbs,

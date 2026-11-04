@@ -56,6 +56,7 @@ slag3D/
 ├── server/          # Express backend (use tsx, not tsc)
 │   ├── routes/      # API endpoints
 │   ├── migrations/  # Database schema changes
+│   ├── paths.ts     # Single source of truth for storage paths
 │   └── middleware.ts# Auth helpers
 ├── src/             # React frontend only
 ├── lib/             # Thumbnail engine (Puppeteer + Three.js)
@@ -65,6 +66,19 @@ slag3D/
 │   └── tmp/        # Multer temp uploads
 └── vite.config.ts   # Vite SPA middleware
 ```
+
+### Storage Paths
+- **Never** resolve upload paths with `process.cwd()` or `__dirname` directly —
+  in production the bundle lives in `dist/`, which made the server write to
+  `<cwd>/uploads` but serve from `<bundle>/uploads` (the SPA fallback then
+  answered with `index.html`, breaking the 3D viewer with
+  `Invalid typed array length`).
+- Use `server/paths.ts`: `UPLOADS_DIR`, `THUMBNAILS_DIR`, `MODELS_DIR`,
+  `TMP_UPLOADS_DIR`, `resolveUploadsPath()`, `ensureUploadsDirs()`.
+- `UPLOADS_DIR` env var overrides the default (`<project root>/uploads`);
+  Docker uses `/uploads`, the LXC installer `/opt/slag3D/uploads`.
+- `npm run test:prod-paths` boots the bundled production server and verifies
+  that uploads and thumbnails are written to and served from the same place.
 
 ---
 
@@ -76,6 +90,7 @@ slag3D/
 | `REFRESH_TOKEN_SECRET` | (required) | Refresh token signing — **min 32 chars** |
 | `SESSION_SECRET` | (required) | Session cookie signing — **min 32 chars** |
 | `DB_PATH` | auto | SQLite database path (overrides `/data` / `./data`) |
+| `UPLOADS_DIR` | `<project root>/uploads` | Uploaded models + rendered thumbnails |
 | `GOOSE_SEED_DB` | false | Seed first admin (dev / initial deploy) |
 | `ADMIN_USER` | `admin` | Username created by first-run seeding |
 | `ADMIN_PASSWORD` | `admin123` | Password created by first-run seeding; setting it also enables seeding |
