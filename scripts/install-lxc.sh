@@ -97,7 +97,7 @@ install_nodejs() {
     fi
 }
 
-# 3. Install system dependencies (includes python3-setuptools for node-gyp build support)
+# 3. Install system dependencies (includes python3-setuptools for node-gyp build support on Python 3.12+)
 install_dependencies() {
     log_info "Updating apt package repositories..."
     apt-get update -y
