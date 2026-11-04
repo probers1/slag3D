@@ -5,6 +5,8 @@ import express from 'express';
 import session from 'express-session';
 import rateLimit from 'express-rate-limit';
 import connectSqlite3 from 'connect-sqlite3';
+import session from 'express-session';
+import SqliteStoreInit from 'express-session-better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -120,16 +122,15 @@ if (!fs.existsSync(thumbDir)) {
 }
 
 // Configure SQLite Session Store
-const SQLiteStore = connectSqlite3(session);
-const sessionDir = path.dirname(dbPath);
-if (!fs.existsSync(sessionDir)) {
-  fs.mkdirSync(sessionDir, { recursive: true });
-}
-const sessionStore: any = new SQLiteStore({
-  db: 'sessions.db',
-  dir: sessionDir,
-});
+const SqliteStore = SqliteStoreInit(session);
 
+const sessionStore = new SqliteStore({
+  client: db, // Reuses your existing better-sqlite3 instance from db.ts
+  expired: {
+    clear: true,
+    intervalMs: 900000 // Clear expired sessions every 15 minutes
+  }
+});
 app.set('trust proxy', 1);
 
 app.use(
