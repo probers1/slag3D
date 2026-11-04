@@ -6,6 +6,7 @@
 ```bash
 npm run dev         # Dev server (auto-seeds admin)
 npm run build && npm start  # Production mode
+npm run set-admin -- 'NewPassword'  # Create/reset the admin account in the DB
 pkill -9 node       # Kill processes
 rm -f data/*.db*    # Reset database
 ```
@@ -14,6 +15,15 @@ rm -f data/*.db*    # Reset database
 - **Username**: `admin`
 - **Password**: `admin123`
 - ⚠️ Change immediately for production
+
+### Admin Credential Recovery
+- First-run seeding only happens when the `users` table is empty — an existing
+  database keeps its old admin password even if `.env` changes.
+- `npm run set-admin -- 'NewPassword'` (or `npm run set-admin` to use
+  `ADMIN_USER` / `ADMIN_PASSWORD` from `.env`) creates or resets the admin
+  account directly in SQLite. It works while the server is running (WAL).
+- `scripts/install-lxc.sh` runs this automatically when the printed credentials
+  fail to authenticate.
 
 ---
 

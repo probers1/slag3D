@@ -25,6 +25,39 @@ log_success() { echo -e "${GREEN}[OK]${NC}  $1"; }
 log_warn()    { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
+# Read a value from a .env style file (supports optional quotes)
+read_env_value() {
+    local key="$1" file="$2" default="${3:-}"
+    local value=""
+
+    if [ -f "$file" ]; then
+        value=$(grep -E "^[[:space:]]*${key}=" "$file" | tail -n 1 | cut -d '=' -f 2- || true)
+        value=$(printf '%s' "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ "$value" == \"*\" ]] || [[ "$value" == \'*\' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+    fi
+
+    if [ -z "$value" ]; then
+        value="$default"
+    fi
+
+    printf '%s' "$value"
+}
+
+# Generate a random 20 character alphanumeric admin password.
+# `cut` is used instead of `head -c` because `head` closes the pipe early,
+# which triggers SIGPIPE in the producer and aborts the installer under
+# `set -euo pipefail`.
+generate_admin_password() {
+    local password
+    password=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c 1-20)
+    if [ "${#password}" -lt 16 ]; then
+        password=$(openssl rand -hex 16 | cut -c 1-20)
+    fi
+    printf '%s' "$password"
+}
+
 print_header() {
     echo "=========================================================="
     echo "  SLAG3D (Storage, Library, & Asset Grid) Installer"
@@ -120,6 +153,7 @@ setup_configuration() {
 
     # Database migration check
     local OLD_DB_PATH="/opt/slag3d/data/vault.db"
+    local DOCKER_DB_PATH="/data/vault.db"
     local NEW_DB_PATH="${DATA_DIR}/vault.db"
 
     if [ -f "$NEW_DB_PATH" ]; then
@@ -134,6 +168,9 @@ setup_configuration() {
     elif [ -f "$OLD_DB_PATH" ]; then
         log_warn "Migrating database from ${OLD_DB_PATH}..."
         cp "$OLD_DB_PATH" "$NEW_DB_PATH"
+    elif [ -f "$DOCKER_DB_PATH" ]; then
+        log_warn "Migrating database from ${DOCKER_DB_PATH}..."
+        cp "$DOCKER_DB_PATH" "$NEW_DB_PATH"
     fi
 
     # Environment configuration generation
@@ -144,7 +181,7 @@ setup_configuration() {
         JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n')
         SESSION_SECRET=$(openssl rand -base64 48 | tr -d '\n')
         REFRESH_TOKEN_SECRET=$(openssl rand -base64 48 | tr -d '\n')
-        ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'A-Za-z0-9' | head -c 20)
+        ADMIN_PASSWORD=$(generate_admin_password)
 
         cat > "${ENV_FILE}" <<ENDOFENV
 # SLAG3D Production Environment Configuration
@@ -166,7 +203,23 @@ ENDOFENV
         log_success "Generated Admin Password: ${ADMIN_PASSWORD}"
     else
         log_info "Existing .env configuration preserved."
+
+        if ! grep -q '^ADMIN_USER=' "$ENV_FILE"; then
+            printf '\nADMIN_USER=admin\n' >> "$ENV_FILE"
+            log_info "Added ADMIN_USER=admin to ${ENV_FILE}"
+        fi
+
+        if ! grep -q '^ADMIN_PASSWORD=' "$ENV_FILE"; then
+            local NEW_ADMIN_PASSWORD
+            NEW_ADMIN_PASSWORD=$(generate_admin_password)
+            printf '\nADMIN_PASSWORD="%s"\n' "$NEW_ADMIN_PASSWORD" >> "$ENV_FILE"
+            log_success "Generated Admin Password: ${NEW_ADMIN_PASSWORD}"
+        fi
     fi
+
+    # Credentials that must work after installation
+    ADMIN_USER=$(read_env_value "ADMIN_USER" "$ENV_FILE" "admin")
+    ADMIN_PASSWORD=$(read_env_value "ADMIN_PASSWORD" "$ENV_FILE" "")
 }
 
 # 5. Deploy application files & post-build pruning
@@ -238,6 +291,7 @@ TimeoutStopSec=30
 
 Environment=NODE_ENV=production
 Environment=PORT=3000
+Environment=DB_PATH=${DATA_DIR}/vault.db
 Environment=PUPPETEER_FORCE_CHROMIUM_PATH=/usr/bin/chromium
 Environment=PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 Environment=PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
@@ -270,6 +324,75 @@ start_systemd_service() {
     fi
 }
 
+# 7b. Wait until the HTTP API answers
+wait_for_api() {
+    local port="${1:-3000}"
+    local url="http://127.0.0.1:${port}/api/health"
+
+    log_info "Waiting for the API to become ready..."
+    for _ in $(seq 1 60); do
+        if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+            log_success "API is responding on port ${port}"
+            return 0
+        fi
+        sleep 1
+    done
+
+    log_error "API did not become ready within 60 seconds. Recent logs:"
+    journalctl -u slag3D.service -n 20 --no-pager || true
+    return 1
+}
+
+# 7c. Verify that the configured admin credentials actually work.
+# The admin account is only auto-seeded on an empty database, so an existing
+# installation can keep an old password while .env advertises a new one.
+# When that happens the password is re-synced with the configured value.
+verify_admin_login() {
+    local user="$1" pass="$2" port="${3:-3000}"
+    local payload
+
+    payload=$(node -e 'process.stdout.write(JSON.stringify({ username: process.argv[1], password: process.argv[2] }))' "$user" "$pass")
+
+    curl -fsS --max-time 5 \
+        -H 'Content-Type: application/json' \
+        --data "$payload" \
+        "http://127.0.0.1:${port}/api/auth/login" >/dev/null 2>&1
+}
+
+sync_admin_credentials() {
+    local user="$1" pass="$2" port="${3:-3000}"
+
+    if [ -z "$pass" ]; then
+        log_warn "No ADMIN_PASSWORD configured - skipping admin credential verification."
+        return 0
+    fi
+
+    if verify_admin_login "$user" "$pass" "$port"; then
+        log_success "Admin credentials verified (user: ${user})"
+        return 0
+    fi
+
+    log_warn "Admin login with the configured password failed - syncing the admin account."
+
+    if [ ! -f "${APP_DIR}/scripts/set-admin-password.js" ]; then
+        log_error "scripts/set-admin-password.js is missing. Run 'git pull' in ${APP_DIR} and retry."
+        return 1
+    fi
+
+    if ! (cd "$APP_DIR" && DB_PATH="${DATA_DIR}/vault.db" ADMIN_USER="$user" ADMIN_PASSWORD="$pass" node scripts/set-admin-password.js); then
+        log_error "Failed to sync the admin account."
+        return 1
+    fi
+
+    if verify_admin_login "$user" "$pass" "$port"; then
+        log_success "Admin password synced and login verified"
+        return 0
+    fi
+
+    log_error "Admin login still fails after resetting the password. Check 'journalctl -u slag3D.service'."
+    return 1
+}
+
 # 8. Report final status
 verify_and_report() {
     echo ""
@@ -283,9 +406,13 @@ verify_and_report() {
         log_warn "Port 3000 not listening yet (service warming up)"
     fi
 
+    local ENV_FILE="${APP_DIR}/.env"
     local PASS_DISP="[Check ${APP_DIR}/.env for admin credentials]"
-    if [ -f "${APP_DIR}/.env" ]; then
-        PASS_DISP=$(grep "^ADMIN_PASSWORD=" "${APP_DIR}/.env" | cut -d'=' -f2 | tr -d '"')
+    local USER_DISP="admin"
+
+    if [ -f "$ENV_FILE" ]; then
+        PASS_DISP=$(read_env_value "ADMIN_PASSWORD" "$ENV_FILE" "$PASS_DISP")
+        USER_DISP=$(read_env_value "ADMIN_USER" "$ENV_FILE" "admin")
     fi
 
     echo ""
@@ -293,8 +420,11 @@ verify_and_report() {
     log_success "SLAG3D Installation Complete!"
     log_success "=========================================="
     echo "Dashboard URL: http://$(hostname -I | awk '{print $1}'):3000"
-    echo "Admin User:    admin"
+    echo "Admin User:    ${USER_DISP}"
     echo "Admin Pass:    ${PASS_DISP}"
+    echo ""
+    echo "Change or reset the admin password with:"
+    echo "  cd ${APP_DIR} && npm run set-admin -- 'YourNewPassword'"
     echo ""
 }
 
@@ -307,6 +437,8 @@ main() {
     deploy_application
     create_systemd_service
     start_systemd_service
+    wait_for_api 3000
+    sync_admin_credentials "$ADMIN_USER" "$ADMIN_PASSWORD" 3000
     verify_and_report
 }
 
@@ -320,6 +452,11 @@ if [ "${1:-}" = "--update" ] && [ -f "/opt/slag3D/package.json" ]; then
     npm prune --omit=dev
     rm -rf ~/.npm ~/.cache
     systemctl restart slag3D.service
+    if wait_for_api 3000; then
+        UPDATE_ADMIN_USER=$(read_env_value "ADMIN_USER" "/opt/slag3D/.env" "admin")
+        UPDATE_ADMIN_PASSWORD=$(read_env_value "ADMIN_PASSWORD" "/opt/slag3D/.env" "")
+        sync_admin_credentials "$UPDATE_ADMIN_USER" "$UPDATE_ADMIN_PASSWORD" 3000 || true
+    fi
     log_success "Update complete. Service restarted."
     exit 0
 fi

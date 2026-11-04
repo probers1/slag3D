@@ -16,6 +16,7 @@
     "start": "node dist/server.js",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
+    "set-admin": "node scripts/set-admin-password.js",
     "test": "tsx tests/smoke.test.ts"
   },
   "dependencies": {

@@ -103,6 +103,10 @@ curl -fsSL https://raw.githubusercontent.com/slag3d/slag3d/main/scripts/install-
 systemctl status slag3d.service
 ```
 
+The installer generates a random admin password, stores it in `/opt/slag3D/.env`
+and prints it at the end. It also verifies that the printed credentials really
+work and re-syncs the admin account if the database contains an older password.
+
 ### Docker Compose
 ```bash
 docker compose up -d
@@ -116,8 +120,20 @@ docker compose up -d
 | Username | Password | Role | Notes |
 |----------|----------|------|-------|
 | `admin` | `admin123` | Administrator | **Dev mode only** — change after first login |
+| `admin` | random | Administrator | LXC installer — see `/opt/slag3D/.env` (`ADMIN_PASSWORD`) |
 
 Change default password via: Settings → Change Password (top navigation)
+
+### Resetting the admin password (server console)
+
+```bash
+cd /opt/slag3D
+npm run set-admin -- 'YourNewStrongPassword'   # one-off password
+npm run set-admin                               # uses ADMIN_USER / ADMIN_PASSWORD from .env
+```
+
+The command updates the `admin` account in the database directly, so it also
+works when the current password is unknown or the account was soft-deleted.
 
 ---
 
