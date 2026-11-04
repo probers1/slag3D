@@ -251,11 +251,14 @@ deploy_application() {
     # Check if node_modules exists (fresh install or update needed)
     if [ ! -d "${APP_DIR}/node_modules" ]; then
         # Approve missing install scripts for native modules and build tools
+        log_info "Installing Node.js dependencies (including native better-sqlite3)..."
+        npm install --omit=dev
+
         log_info "Approving install scripts for native modules..."
         npm install-scripts approve better-sqlite3 puppeteer sqlite3
-        
+
         log_info "Installing Node.js dependencies (including native better-sqlite3)..."
-        npm install --omit=dev || npm install
+        npm install --omit=dev
         
     else
         log_info "Dependencies already installed - skipping npm install"
