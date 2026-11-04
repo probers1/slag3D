@@ -3,23 +3,35 @@ import path from 'path';
 import fs from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import StreamZip from 'node-stream-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { db } from './db.ts';
 import { MODELS_DIR, TMP_UPLOADS_DIR, resolveUploadsPath } from './paths.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
+import {
+  MODEL_EXTENSIONS,
+  UploadValidationError,
+  extractZipArchive,
+  mimeTypeForModelExtension,
+  modelExtensionOf,
+  safeStoredFilename,
+  type ExtractedFileInfo,
+} from './lib/uploadSecurity.ts';
+
+// Re-export the upload security primitives so existing import sites keep working.
+export {
+  MODEL_EXTENSIONS,
+  UploadValidationError,
+  extractZipArchive,
+  mimeTypeForModelExtension,
+  modelExtensionOf,
+  safeStoredFilename,
+  type ExtractedFileInfo,
+} from './lib/uploadSecurity.ts';
 
 const execAsync = promisify(exec);
 
 // Allowed file extensions (3D models and safe archives)
 const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
-
-// Dangerous indicators in filenames to block
-const SUSPICIOUS_PATTERNS = [
-  'script', 'exe', 'bat', 'cmd', 'ps1',
-  'html', 'htm', 'js', 'vbs', 'sh',
-  'bash', 'bin', 'py', 'pl'
-];
 
 // 2D image extensions (for rejection)
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
@@ -34,35 +46,28 @@ function validateFile(file: Express.Multer.File): { valid: boolean; error?: Erro
   // Handle files without extension
   if (ext === '') {
     console.error(`[UPLOAD SECURITY] Rejected file without extension: ${originalName}`);
-    return { valid: false, error: new Error(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+    return { valid: false, error: new UploadValidationError(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
   }
 
   // Reject image files
   if (IMAGE_EXTENSIONS.includes(ext)) {
     console.error(`[UPLOAD SECURITY] Image file rejected: ${originalName}`);
-    return { valid: false, error: new Error(`Image file (.${ext}) is not allowed for 3D models. Supported formats: .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+    return { valid: false, error: new UploadValidationError(`Image file (.${ext}) is not allowed for 3D models. Supported formats: .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
   }
 
   // Check extension against allowlist
   if (!ALLOWED_EXTENSIONS.includes('.' + ext)) {
     console.error(`[UPLOAD SECURITY] Unsupported extension: ${ext} in ${originalName}`);
-    return { valid: false, error: new Error(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
+    return { valid: false, error: new UploadValidationError(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
   }
 
-  // Additional checks for archives (.zip, .7z) with suspicious names
-  if (ext === 'zip' || ext === '7z') {
-    const lowerName = originalName.toLowerCase();
-    if (SUSPICIOUS_PATTERNS.some(pattern => lowerName.includes(pattern))) {
-      console.error(`[UPLOAD SECURITY] Blocked suspicious archive: ${originalName}`);
-      return { valid: false, error: new Error(`File ${originalName}: Suspicious archive name contains security-related keywords. Only clean 3D model archives are allowed.`) };
-    }
-    
-    // Check for embedded executables in ZIP
-    if (['executable', 'script', 'bat', 'cmd'].some(pattern => lowerName.includes(pattern))) {
-      console.error(`[UPLOAD SECURITY] Rejected executable-like archive: ${originalName}`);
-      return { valid: false, error: new Error(`File ${originalName}: Archives containing executables or scripts are not allowed.`) };
-    }
-  }
+  // NOTE: the archive *file name* is deliberately not inspected. The archive
+  // itself is never served (it is deleted right after extraction and its
+  // content type is `application/zip`, which is never rendered inline). The
+  // real security control is the strict entry allowlist applied during
+  // extraction (see lib/uploadSecurity.ts), which inspects every file inside
+  // the archive. Name based heuristics only produced false rejections
+  // (e.g. an archive named "combining.zip" contains "bin").
 
   return { valid: true };
 }
@@ -83,8 +88,10 @@ const uploadStorage = multer.diskStorage({
     const validation = validateFile(file);
     
     if (!validation.valid) {
-      // Return error via callback for proper HTTP response handling
-      return cb(new Error(validation.error?.message || `Invalid file type for upload: ${file.originalname}`), null as any);
+      // Return error via callback for proper HTTP response handling.
+      // `UploadValidationError` carries a status of 400 so the global error
+      // handler answers with 400 instead of 500.
+      return cb(new UploadValidationError(validation.error?.message || `Invalid file type for upload: ${file.originalname}`), null as any);
     }
     
     // Generate unique filename with extension
@@ -103,14 +110,56 @@ export const uploadMiddleware = multer({
   // File filter is optional - we handle validation in filename callback
 });
 
-interface ExtractedFileInfo {
-  id: string;
-  filename: string;
-  original_name: string;
-  mime_type: string;
-  file_size: number;
-  file_path: string;
-  is_primary_3d: number;
+/**
+ * Extract a 7z archive into the model directory using the system 7z binary.
+ * Mirrors the .zip flow and applies the same strict extension allowlist.
+ */
+export async function extract7zArchive(
+  archivePath: string,
+  modelId: string,
+  modelDir: string
+): Promise<ExtractedFileInfo[]> {
+  const extracted: ExtractedFileInfo[] = [];
+  const tempDir = fs.mkdtempSync(path.join(TMP_UPLOADS_DIR, '7z-XXXXXX'));
+  const archiveCopy = path.join(tempDir, 'archive.7z');
+  fs.copyFileSync(archivePath, archiveCopy);
+
+  try {
+    await execAsync(`7z x -y "${archiveCopy}" -o"${tempDir}"`);
+
+    const extractedEntries = (fs.readdirSync(tempDir, { recursive: true }) as string[])
+      .map((f) => path.join(tempDir, f))
+      .filter((p: string) => {
+        try {
+          return fs.statSync(p).isFile() && modelExtensionOf(p) !== null;
+        } catch {
+          return false;
+        }
+      });
+
+    for (const p of extractedEntries) {
+      const entryExt = modelExtensionOf(p)!;
+      const destName = safeStoredFilename(path.basename(p), entryExt);
+      const destPath = path.join(modelDir, destName);
+      fs.copyFileSync(p, destPath);
+      const stat = fs.statSync(destPath);
+
+      extracted.push({
+        id: uuidv4(),
+        filename: destName,
+        original_name: path.basename(p),
+        mime_type: mimeTypeForModelExtension(entryExt),
+        file_size: stat.size,
+        file_path: `/uploads/models/${modelId}/${destName}`,
+        is_primary_3d: 0,
+      });
+    }
+  } finally {
+    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
+    try { fs.unlinkSync(archivePath); } catch {}
+  }
+
+  return extracted;
 }
 
 export async function processModelFiles(
@@ -130,105 +179,33 @@ export async function processModelFiles(
 
     if (ext === '.zip') {
       // Extract ZIP archive using node-stream-zip
-      try {
-        const zip = new StreamZip.async({ file: file.path });
-        const entries = await zip.entries();
-
-        for (const entry of Object.values(entries)) {
-          if (entry.isDirectory) continue;
-          
-          // Clean base filename without nested directory traversal risk
-          const baseName = path.basename(entry.name);
-          // Skip hidden / macOS metadata files
-          if (baseName.startsWith('.') || entry.name.includes('__MACOSX')) continue;
-
-          // Security: Check for dangerous file types in extracted contents
-          const lowerEntry = entry.name.toLowerCase();
-          const dangerousEntryPatterns = ['.exe', '.bat', '.cmd', '.ps1', '.sh', '.py', '.pl', 'executable', 'script'];
-          
-          if (dangerousEntryPatterns.some(pattern => lowerEntry.includes(pattern))) {
-            console.warn(`[UPLOAD SECURITY] Skipping dangerous archive entry: ${entry.name}`);
-            continue;
-          }
-
-          const destPath = path.join(modelDir, `${uuidv4()}_${baseName}`);
-          await zip.extract(entry.name, destPath);
-
-          const stat = fs.statSync(destPath);
-          const entryExt = path.extname(baseName).toLowerCase();
-          const mimeType = entryExt === '.stl' ? 'model/stl' : entryExt === '.3mf' ? 'model/3mf' : entryExt === '.obj' ? 'model/obj' : 'application/octet-stream';
-
-          processedFiles.push({
-            id: uuidv4(),
-            filename: path.basename(destPath),
-            original_name: baseName,
-            mime_type: mimeType,
-            file_size: stat.size,
-            file_path: `/uploads/models/${modelId}/${path.basename(destPath)}`,
-            is_primary_3d: 0,
-          });
-        }
-        await zip.close();
-      } catch (err) {
-        console.error(`Error unzipping file ${file.originalname}:`, err);
-      } finally {
-        // Clean up temporary uploaded zip
-        try { fs.unlinkSync(file.path); } catch {}
-      }
+      const extracted = await extractZipArchive(file.path, modelId, modelDir);
+      processedFiles.push(...extracted);
     } else if (ext === '.7z') {
       // Extract 7z archive using system 7z binary (p7zip) — mirrors the .zip extraction flow
-      const tempDir = fs.mkdtempSync(path.join(TMP_UPLOADS_DIR, '7z-XXXXXX'));
-      const archiveCopy = path.join(tempDir, 'archive.7z');
-      fs.copyFileSync(file.path, archiveCopy);
-      try {
-        await execAsync(`7z x -y "${archiveCopy}" -o"${tempDir}"`);
-
-        const extractedEntries = (fs.readdirSync(tempDir, { recursive: true }) as string[])
-          .map((f) => path.join(tempDir, f))
-          .filter((p: string) => {
-            try {
-              return fs.statSync(p).isFile() && ['.stl', '.3mf', '.obj'].includes(path.extname(p).toLowerCase());
-            } catch {
-              return false;
-            }
-          });
-
-        for (const p of extractedEntries) {
-          const destName = `${uuidv4()}_${path.basename(p)}`;
-          const destPath = path.join(modelDir, destName);
-          fs.copyFileSync(p, destPath);
-          const stat = fs.statSync(destPath);
-          const entryExt = path.extname(p).toLowerCase();
-          const mimeType = entryExt === '.stl' ? 'model/stl' : entryExt === '.3mf' ? 'model/3mf' : entryExt === '.obj' ? 'model/obj' : 'application/octet-stream';
-          processedFiles.push({
-            id: uuidv4(),
-            filename: destName,
-            original_name: path.basename(p),
-            mime_type: mimeType,
-            file_size: stat.size,
-            file_path: `/uploads/models/${modelId}/${destName}`,
-            is_primary_3d: 0,
-          });
-        }
-      } catch (err) {
-        console.error(`Error extracting 7z file ${file.originalname}:`, err);
-      } finally {
-        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch {}
-        try { fs.unlinkSync(file.path); } catch {}
-      }
+      const extracted = await extract7zArchive(file.path, modelId, modelDir);
+      processedFiles.push(...extracted);
     } else {
-      // Direct 3D model file (.stl, .obj, .3mf) or other
-      const destFilename = `${uuidv4()}_${file.originalname}`;
+      // Direct 3D model file (.stl, .obj, .3mf).
+      // The extension is re-validated here: the payload is written into the
+      // browser-served uploads directory, so only allowlisted model formats
+      // may be stored.
+      const modelExt = modelExtensionOf(file.originalname);
+      if (!modelExt) {
+        console.warn(`[UPLOAD SECURITY] Rejected file with unsupported type: ${file.originalname}`);
+        try { fs.unlinkSync(file.path); } catch {}
+        continue;
+      }
+
+      const destFilename = safeStoredFilename(file.originalname, modelExt);
       const destPath = path.join(modelDir, destFilename);
       fs.renameSync(file.path, destPath);
-
-      const mimeType = ext === '.stl' ? 'model/stl' : ext === '.3mf' ? 'model/3mf' : ext === '.obj' ? 'model/obj' : 'application/octet-stream';
 
       processedFiles.push({
         id: uuidv4(),
         filename: destFilename,
         original_name: file.originalname,
-        mime_type: mimeType,
+        mime_type: mimeTypeForModelExtension(modelExt),
         file_size: file.size,
         file_path: `/uploads/models/${modelId}/${destFilename}`,
         is_primary_3d: 0,
@@ -236,12 +213,17 @@ export async function processModelFiles(
     }
   }
 
+  if (processedFiles.length === 0) {
+    throw new UploadValidationError(
+      'No valid 3D model files (.stl, .3mf, .obj) were found in the upload.'
+    );
+  }
+
   // Identify 3D files (.stl, .3mf, .obj) and designate largest as primary (initial upload only)
   if (!options.isSupplementary) {
-    const model3dFiles = processedFiles.filter((f) => {
-      const ext = path.extname(f.original_name).toLowerCase();
-      return ['.stl', '.3mf', '.obj'].includes(ext);
-    });
+    const model3dFiles = processedFiles.filter(
+      (f) => modelExtensionOf(f.original_name) !== null
+    );
 
     if (model3dFiles.length > 0) {
       // Sort descending by file_size

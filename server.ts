@@ -149,15 +149,48 @@ app.use(
 app.use(authResolverMiddleware);
 app.use(csrfProtection);
 
+// Content types for the 3D payloads we store. `send` resolves `.stl` to the
+// unrelated `application/vnd.ms-pki.stl`, so the type is set explicitly to
+// match the mime_type recorded in the database.
+const MODEL_CONTENT_TYPES: Record<string, string> = {
+  '.stl': 'model/stl',
+  '.3mf': 'model/3mf',
+  '.obj': 'model/obj',
+};
+
 // Serve uploaded files statically
 // - /uploads/thumbnails are rendered previews accessible for img tags
 // - /uploads/models (user 3D assets) require authentication via session, Bearer token, or ?token= query param
+//
+// Hardening: the uploads directory is served from the application's own
+// origin. `nosniff` stops the browser from guessing a content type, and model
+// payloads are always delivered as downloads (`Content-Disposition:
+// attachment`) so a stray .html/.svg can never be rendered inline - which
+// would be a stored XSS vector.
 app.use('/uploads', (req, res, next) => {
   if (req.userId || req.path.startsWith('/thumbnails/')) {
     return next();
   }
   return res.status(401).json({ error: 'Authentication required' });
-}, express.static(UPLOADS_DIR));
+}, express.static(UPLOADS_DIR, {
+  setHeaders(res, filePath) {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
+    // Thumbnails stay inline so <img> tags keep working; model files are
+    // downloads only (Three.js loads them via XHR, which is unaffected).
+    if (filePath.includes(`${path.sep}models${path.sep}`)) {
+      res.setHeader('Content-Disposition', 'attachment');
+
+      const ext = path.extname(filePath).toLowerCase();
+      const contentType = MODEL_CONTENT_TYPES[ext];
+      if (contentType) {
+        // `send` only sets a content type when none is present yet, so this
+        // explicit value wins.
+        res.setHeader('Content-Type', contentType);
+      }
+    }
+  },
+}));
 
 // A missing upload must never fall through to the SPA fallback: the client
 // would receive index.html instead of the binary model file and fail with

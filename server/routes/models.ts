@@ -271,7 +271,12 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
         }
       } catch {}
     }
-    res.status(500).json({ error: 'Failed to process model upload' });
+    // Client-side problems (e.g. an archive without any 3D model files) are
+    // reported as 400; anything else stays a generic 500.
+    const isClientError = err?.status === 400;
+    res.status(isClientError ? 400 : 500).json({
+      error: isClientError ? err.message : 'Failed to process model upload',
+    });
   }
 });
 
@@ -586,7 +591,10 @@ router.post('/:id/files', uploadLimiter, uploadMiddleware.array('files', 10), as
     res.json({ files: processedFiles });
   } catch (err: any) {
     console.error('[SLAG3D] Supplementary file upload failed:', err?.message || err);
-    res.status(500).json({ error: 'Failed to process file upload' });
+    const isClientError = err?.status === 400;
+    res.status(isClientError ? 400 : 500).json({
+      error: isClientError ? err.message : 'Failed to process file upload',
+    });
   }
 });
 export default router;
