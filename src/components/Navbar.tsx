@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Heart, Folder, User as UserIcon, Shield, Lock, LogOut, Upload } from 'lucide-react';
+import { Heart, Folder, User as UserIcon, Shield, Lock, LogOut, Upload } from 'lucide-react';
 import { User } from '../types';
 
 interface NavbarProps {
@@ -32,8 +32,8 @@ export const Navbar: React.FC<NavbarProps> = ({
             onClick={() => onTabChange('all')}
             className="flex items-center gap-2.5 text-left group focus:outline-none"
           >
-            <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 group-hover:bg-blue-600/30 group-hover:border-blue-400 transition-all">
-              <Box className="w-5 h-5" />
+            <div className="w-9 h-9 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 group-hover:bg-blue-600/30 group-hover:border-blue-400 transition-all overflow-hidden">
+              <img src="/favicon.png" alt="SLAG3D" className="w-5 h-5" />
             </div>
             <div>
               <span className="text-xl font-bold tracking-tight text-white font-['Plus_Jakarta_Sans',sans-serif]">
