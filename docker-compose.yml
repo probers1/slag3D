@@ -11,15 +11,11 @@ services:
     environment:
       - PORT=3000
       - NODE_ENV=production
-      - JWT_SECRET=${JWT_SECRET:-}
-      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET:-}
+      # Values are read from the .env file next to this compose file.
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET must be set in .env}
+      - REFRESH_TOKEN_SECRET=${REFRESH_TOKEN_SECRET:?REFRESH_TOKEN_SECRET must be set in .env}
+      - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set in .env}
       - SESSION_EXPIRY_MINUTES=${SESSION_EXPIRY_MINUTES:-1440}
-    secrets:
-      - session_secret
-      # Secret injection into container environment. 
-      # The secret file is mounted as an env var at runtime.
-      session_env:
-        key: SESSION_SECRET
     volumes:
       # Persistent SQLite database storage
       - slag3d_data:/data
@@ -37,9 +33,3 @@ volumes:
     name: slag3d_vault_data
   slag3d_uploads:
     name: slag3d_vault_uploads
-
-secrets:
-  session_secret:
-    file: ./secrets/session_secret.txt  # Generate this file with ./scripts/init-secret.sh (kept out of git on purpose; see session_secret.txt.example)
-  # Or initialize with a generated secure random value:
-  # curl -s https://www.random.org/secured/random/?num=1&output=txt > secrets/session_secret.txt

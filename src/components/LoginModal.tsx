@@ -10,8 +10,8 @@ interface LoginModalProps {
 }
 
 export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose }) => {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -56,11 +56,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({ onLoginSuccess, onClose 
     } finally {
       setLoading(false);
     }
-  };
-
-  const fillAdmin = () => {
-    setUsername('admin');
-    setPassword('admin123');
   };
 
   return (

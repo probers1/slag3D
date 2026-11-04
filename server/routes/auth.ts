@@ -208,14 +208,19 @@ router.post('/logout', authLogoutLimiter, (req, res) => {
     token = req.headers['x-auth-token'].trim();
   }
 
-  // 1. Invalidate refresh token on the backend (delete from DB)
-  if (token) {
-    try {
+  // 1. Invalidate refresh tokens on the backend (delete from DB).
+  // Deleting by user_id clears the rotated refresh token even though the
+  // request normally carries the short-lived access token, not the refresh token.
+  try {
+    if (req.userId) {
+      db.prepare('DELETE FROM auth_tokens WHERE user_id = ?').run(req.userId);
+      console.log(`[AUTH] All refresh tokens invalidated for ${req.userId.substring(0, 6)}...`);
+    } else if (token) {
       db.prepare('DELETE FROM auth_tokens WHERE token = ?').run(token);
       console.log('Auth token successfully invalidated.');
-    } catch (e) {
-      console.warn('Could not delete auth token:', e);
     }
+  } catch (e) {
+    console.warn('Could not delete auth token:', e);
   }
 
   // Clear CSRF cookie if it exists

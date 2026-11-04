@@ -63,9 +63,13 @@ slag3D/
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `JWT_SECRET` | (required) | JWT signing — **min 32 chars** |
-| `SESSION_SECRET` | auto-gen | Session cookie signing |
-| `GOOSE_SEED_DB` | false | Auto-seed admin account (dev only) |
-| `SESSION_EXPIRY_MINUTES` | 3360 | Cookie max age (7 days default) |
+| `REFRESH_TOKEN_SECRET` | (required) | Refresh token signing — **min 32 chars** |
+| `SESSION_SECRET` | (required) | Session cookie signing — **min 32 chars** |
+| `DB_PATH` | auto | SQLite database path (overrides `/data` / `./data`) |
+| `GOOSE_SEED_DB` | false | Seed first admin (dev / initial deploy) |
+| `ADMIN_USER` | `admin` | Username created by first-run seeding |
+| `ADMIN_PASSWORD` | `admin123` | Password created by first-run seeding; setting it also enables seeding |
+| `SESSION_EXPIRY_MINUTES` | 1440 | Cookie max age (24 hours default) |
 
 ---
 

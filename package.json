@@ -6,8 +6,7 @@
   "allowScripts": {
     "better-sqlite3": true,
     "esbuild": true,
-    "puppeteer": true,
-    "sqlite3": true
+    "puppeteer": true
   },
   "scripts": {
     "dev": "tsx server.ts",
@@ -22,11 +21,11 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.3",
-    "connect-sqlite3": "^0.9.18",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "express-rate-limit": "^8.7.2",
     "express-session": "^1.19.0",
+    "express-session-better-sqlite3": "^1.2.1",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.546.0",
     "multer": "^2.5.0",
@@ -35,7 +34,6 @@
     "puppeteer": "^25.16.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
-    "sqlite3": "5.1.7",
     "three": "^0.186.1",
     "uuid": "^10.0.0"
   },
@@ -43,7 +41,6 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/bcryptjs": "^2.4.6",
     "@types/better-sqlite3": "^9.6.0",
-    "@types/connect-sqlite3": "^0.9.6",
     "@types/express": "^4.17.21",
     "@types/express-session": "^1.19.0",
     "@types/jsonwebtoken": "^9.0.10",

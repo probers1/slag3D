@@ -33,10 +33,8 @@ RUN npm install
 # Copy application source code
 COPY . .
 
-# Build production frontend — only if VITE_MODE=production is set
-if [ "$VITE_MODE" = "production" ]; then
-    RUN npm run build
-fi
+# Build production frontend and bundled server
+RUN npm run build
 
 # Create persistent storage directories with secure ownership
 RUN mkdir -p /data /uploads/thumbnails /uploads/models /uploads/tmp \
@@ -53,12 +51,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# SECURITY FIX #1: Hard-coded startup validation — container WILL NOT start without valid secrets.
-# This prevents malicious reuse of containers with default/weak secrets.
-COPY ./server/startup-validation.js ./startup-validation.js
-RUN node ./startup-validation.js \
-    || (echo "FATAL: Startup validation failed. The container was started without proper security configuration." && echo "Please set JWT_SECRET, REFRESH_TOKEN_SECRET, and SESSION_SECRET and restart." && exit 1)
-
-# Set working directory and run the server
-WORKDIR /app
-CMD ["npm", "start"]
+# SECURITY FIX #1: Startup validation — the container WILL NOT start without valid secrets.
+# Validation runs at container start (not build time) because the secrets are
+# injected as runtime environment variables.
+COPY ./startup-validation.js ./startup-validation.js
+CMD ["sh", "-c", "node ./startup-validation.js && npm start"]

@@ -56,7 +56,9 @@ function strongContains(substring: string, str: string): boolean {
   return false;
 }
 
-// Shannon entropy calculator - deterministic
+// Shannon entropy calculator - deterministic.
+// Returns the total number of entropy bits for the whole string, not the
+// per-symbol value, so it can be compared directly against MIN_ENTROPY_BITS.
 function calculateEntropy(s: string): number {
   const freq: Record<string, number> = {};
   for (let i = 0; i < s.length; i++) {
@@ -64,17 +66,17 @@ function calculateEntropy(s: string): number {
     freq[c] = (freq[c] || 0) + 1;
   }
 
-  let entropy = 0;
+  let entropyPerSymbol = 0;
   const total = s.length;
   for (const char in freq) {
     const count = freq[char];
     if (count > 0) {
       const p = count / total;
-      entropy -= p * Math.log2(p);
+      entropyPerSymbol -= p * Math.log2(p);
     }
   }
 
-  return entropy;
+  return entropyPerSymbol * total;
 }
 
 // Entropy threshold: 128 bits minimum for cryptographically secure secrets.
@@ -121,7 +123,8 @@ function validateSecret(secretName: string, envValue: string | undefined): strin
 
   // Check entropy (Shannon entropy >= 128 bits)
   if (!validateSecretMinEntropy(envValue)) {
-    console.error(`[SLAG3D WARNING] ${secretName} has low estimated entropy (${Math.round(validateSecretMinEntropy(envValue) ? 0 : calculateEntropy(envValue)).toFixed(1)} bits). Consider using a longer secret.`);
+    const entropyBits = calculateEntropy(envValue);
+    console.warn(`[SLAG3D WARNING] ${secretName} has low estimated entropy (${entropyBits.toFixed(1)} bits). Consider using a longer secret.`);
     // Do not throw here — allow deployment but warn.
     // The secret is accepted but logged for audit later.
   } else {
@@ -258,8 +261,10 @@ export function authResolverMiddleware(req: Request, res: Response, next: NextFu
     }
   }
 
-  // Priority 2: Fallback to session cookie if token not resolved
-  if (!tokenResolved && !req.path.startsWith('/api/auth')) {
+  // Priority 2: Fallback to session cookie if token not resolved.
+  // This also applies to /api/auth/* routes so session-only clients can use
+  // endpoints such as /api/auth/change-password and /api/auth/logout.
+  if (!tokenResolved) {
     const sessionUserId = req.session?.userId;
     if (sessionUserId) {
       try {

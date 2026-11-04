@@ -9,6 +9,16 @@ import { v4 as uuidv4 } from 'uuid';
  */
 
 export function resolveDbPath(): string {
+  // Explicit DB_PATH always wins (documented in .env.example).
+  const configuredPath = process.env.DB_PATH?.trim();
+  if (configuredPath) {
+    const configuredDir = path.dirname(path.resolve(configuredPath));
+    if (!fs.existsSync(configuredDir)) {
+      fs.mkdirSync(configuredDir, { recursive: true });
+    }
+    return path.resolve(configuredPath);
+  }
+
   const rootDataDir = '/data';
   if (fs.existsSync(rootDataDir) && fs.statSync(rootDataDir).isDirectory()) {
     return path.join(rootDataDir, 'vault.db');
@@ -59,12 +69,20 @@ export function hasMigrationTable(): boolean {
 export function seedAdminIfRequested(): void {
   try {
     const countRow = db.prepare('SELECT COUNT(*) AS count FROM users').get() as { count: number } | undefined;
-    if (countRow?.count === 0 && process.env.GOOSE_SEED_DB === 'true') {
+    const adminPassword = process.env.ADMIN_PASSWORD;
+    const shouldSeed = process.env.GOOSE_SEED_DB === 'true' || Boolean(adminPassword);
+
+    if (countRow?.count === 0 && shouldSeed) {
+      const adminUser = process.env.ADMIN_USER?.trim() || 'admin';
+      const password = adminPassword || 'admin123';
       const salt = bcrypt.genSaltSync(10);
-      const hash = bcrypt.hashSync('admin123', salt);
+      const hash = bcrypt.hashSync(password, salt);
       const insert = db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')`);
-      insert.run(uuidv4(), 'admin', hash);
-      console.log('[SLAG3D] Created default admin user (admin / admin123)');
+      insert.run(uuidv4(), adminUser, hash);
+      console.log(`[SLAG3D] Created default admin user (${adminUser})`);
+      if (!adminPassword) {
+        console.warn('[SLAG3D] Default password "admin123" in use — change it immediately.');
+      }
     }
   } catch (seedErr: any) {
     console.warn('[SLAG3D] Admin seeding check error:', seedErr?.message);
@@ -235,12 +253,5 @@ function applyFallbackTables(): void {
   }
 
   console.log('[MIGRATIONS] Fallback tables created with full schema (v4)\n');
-}
-
-// Validate session secret for session cookie signing
-// Default is handled by dotenv import - use only if explicitly set but weak
-const defaultSessionSecret = process.env.SESSION_SECRET || 'default_session_secret_placeholder';
-if (process.env.SESSION_SECRET?.length && process.env.SESSION_SECRET.length < 32) {
-  console.warn('[SLAG3D WARNING] SESSION_SECRET is set but less than 32 characters. Consider using a stronger secret.');
 }
 

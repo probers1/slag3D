@@ -113,15 +113,18 @@ export function v1_initial_schema(db: Database.Database): { version: number; tim
 
   db.exec(indexes);
 
-  // Create initial admin user if seed is enabled and no users exist
+  // Create initial admin user if seeding is enabled and no users exist
   const countRow = db.prepare('SELECT COUNT(*) as count FROM users').get() as { count: number };
-  if (countRow?.count === 0 && process.env.GOOSE_SEED_DB === 'true') {
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const shouldSeed = process.env.GOOSE_SEED_DB === 'true' || Boolean(adminPassword);
+  if (countRow?.count === 0 && shouldSeed) {
+    const adminUser = process.env.ADMIN_USER?.trim() || 'admin';
     const salt = bcrypt.genSaltSync(10);
-    const hash = bcrypt.hashSync('admin123', salt);
+    const hash = bcrypt.hashSync(adminPassword || 'admin123', salt);
     db.prepare(`INSERT INTO users (id, username, password_hash, role) VALUES (?, ?, ?, 'admin')`)
-      .run(uuidv4(), 'admin', hash);
+      .run(uuidv4(), adminUser, hash);
     
-    console.log('[MIGRATION v1] Created default admin user');
+    console.log(`[MIGRATION v1] Created default admin user (${adminUser})`);
   }
 
   console.log('[MIGRATION v1] Schema tables created successfully\n');

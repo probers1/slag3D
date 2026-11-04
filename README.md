@@ -25,7 +25,7 @@ A self-hosted mesh repository and dashboard for 3D printer models, print farms, 
 | Runtime | Node.js 20 / Express 4 |
 | Database | SQLite (`better-sqlite3`, WAL mode) |
 | Frontend | React 19, TypeScript, Tailwind CSS |
-| 3D Engine | Three.js with STLLoader, OBJLoader |
+| 3D Engine | Three.js with STLLoader, OBJLoader, ThreeMFLoader |
 
 ---
 
@@ -33,13 +33,14 @@ A self-hosted mesh repository and dashboard for 3D printer models, print farms, 
 
 ### Development
 ```bash
+cp .env.example .env   # Fill in the three secrets, set GOOSE_SEED_DB=true
 npm install && npm run dev
-# Auto-seeds: admin / admin123 (change after first login)
+# First run seeds: admin / admin123 (change immediately)
 ```
 
 ### Production
 ```bash
-cp .env.example .env  # Set JWT_SECRET, GOOSE_SEED_DB=false
+cp .env.example .env   # Fill in all secrets and a strong ADMIN_PASSWORD
 npm run build && npm start
 ```
 
@@ -48,12 +49,16 @@ npm run build && npm start
 ## Environment Variables
 
 ```bash
-JWT_SECRET=<min 32 chars>         # Required for production
-GOOSE_SEED_DB=true               # Auto-creates admin (dev only)
-SESSION_EXPIRY_MINUTES=3360       # Default: 7 days
+JWT_SECRET=<min 32 chars>          # Required
+REFRESH_TOKEN_SECRET=<min 32>      # Required
+SESSION_SECRET=<min 32 chars>      # Required
+GOOSE_SEED_DB=true                # Seed first admin (dev / first deploy)
+ADMIN_USER=admin                  # Optional, defaults to admin
+ADMIN_PASSWORD=<strong password>  # Seeds this password on first run
+SESSION_EXPIRY_MINUTES=1440       # Default: 24 hours
 ```
 
-Generate secret: `openssl rand -base64 64`
+Generate secret: `openssl rand -base64 52`
 
 ---
 

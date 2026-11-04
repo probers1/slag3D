@@ -4,13 +4,13 @@ import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
 import rateLimit from 'express-rate-limit';
-import connectSqlite3 from 'connect-sqlite3';
-import session from 'express-session';
 import SqliteStoreInit from 'express-session-better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { initDatabase, db, dbPath } from './server/db.ts';
+
+// Import database and types after other code (to avoid circular deps)
+import { initDatabase, db } from './server/db.ts';
 
 // Import Middleware & Routers
 import { authResolverMiddleware, csrfProtection } from './server/middleware.ts';
@@ -108,7 +108,7 @@ try {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = Number.parseInt(process.env.PORT || '3000', 10);
 
 // Set realistic limits to protect memory footprint (use multer on upload routes for large 3D files)
 app.use(express.json({ limit: '2mb' }));
@@ -121,17 +121,13 @@ if (!fs.existsSync(thumbDir)) {
   fs.mkdirSync(thumbDir, { recursive: true });
 }
 
-// Configure SQLite Session Store
-const SqliteStore = SqliteStoreInit(session);
-
-const sessionStore = new SqliteStore({
-  client: db, // Reuses your existing better-sqlite3 instance from db.ts
-  expired: {
-    clear: true,
-    intervalMs: 900000 // Clear expired sessions every 15 minutes
-  }
-});
 app.set('trust proxy', 1);
+
+// Persistent SQLite-backed session store.
+// This reuses the existing better-sqlite3 connection and implements the full
+// express-session Store contract (get(sid), set(sid, sess, cb), destroy(sid, cb)).
+const SqliteSessionStore = SqliteStoreInit(session, db);
+const sessionStore = new SqliteSessionStore();
 
 app.use(
   session({
@@ -182,6 +178,11 @@ app.get('/api/tags', apiLimiter, (req, res) => {
   res.json({ tags });
 });
 
+// Unmatched API routes must return JSON, not the SPA's index.html.
+app.use('/api', (req, res) => {
+  res.status(404).json({ error: 'API endpoint not found' });
+});
+
 // =============================================================================
 // VITE / STATIC SERVING
 // =============================================================================
@@ -212,7 +213,14 @@ app.use((err: any, req: any, res: any, next: any) => {
   if (res.headersSent) {
     return next(err);
   }
-  const status = err?.status || err?.statusCode || 500;
+
+  // Multer validation errors (bad file type, oversized upload, too many files)
+  // are client errors, not server errors.
+  let status = err?.status || err?.statusCode || 500;
+  if (err?.name === 'MulterError') {
+    status = err.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+  }
+
   res.status(status).json({ error: err?.message || 'Internal server error' });
 });
 

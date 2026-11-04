@@ -11,6 +11,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import {
   X,
   Camera,
@@ -366,6 +367,27 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
         undefined,
         (err) => {
           console.error('OBJ loading error:', err);
+          setLoadingMesh(false);
+        }
+      );
+    } else if (ext === '3mf') {
+      const loader = new ThreeMFLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
+      loader.load(
+        activeFile.file_path,
+        (group) => {
+          group.traverse((child) => {
+            if ((child as THREE.Mesh).isMesh) {
+              (child as THREE.Mesh).material = material;
+            }
+          });
+          attachAndPosition(group);
+        },
+        undefined,
+        (err) => {
+          console.error('3MF loading error:', err);
           setLoadingMesh(false);
         }
       );

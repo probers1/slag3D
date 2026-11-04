@@ -11,9 +11,6 @@
 
 FROM node:20-bookworm-slim
 
-# Security: Drop all privileges except necessary ones
-USER node
-
 # Set environment variables
 ENV NODE_ENV=production \
     PORT=3000 \
@@ -70,13 +67,17 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
   CMD curl -f http://localhost:3000/api/health || exit 1
 
-# SECURITY FIX #1: Hard-coded startup validation
+# SECURITY FIX #1: Startup validation
 # This script runs at container boot and blocks startup if secrets are missing.
-COPY server/startup-validation.js ./startup-validation.js
+COPY startup-validation.js ./startup-validation.js
 
 LABEL com.github.dockerlab.security.fix="secret-enforcement" \
       com.github.dockerlab.security.version="2026-11-02" \
       com.github.dockerlab.description="Hard-coded secret enforcement at container startup to prevent insecure deployments."
+
+# Drop privileges only after packages are installed and files are owned correctly.
+USER node
+
 # Use dumb-init as PID 1 to prevent zombie process accumulation
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["npm", "start"]
+CMD ["sh", "-c", "node ./startup-validation.js && npm start"]

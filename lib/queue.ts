@@ -35,8 +35,17 @@ export function enqueueThumbnailRender(job: RenderJobData) {
       attempt++;
       try {
         console.log(`[SLAG3D Queue] Processing thumbnail for model ${job.modelId} (attempt ${attempt}/${MAX_RETRIES})...`);
-        await renderModelThumbnail(job);
-        return; // Success! Status is updated to 'completed' inside renderModelThumbnail
+        const thumbnailPath = await renderModelThumbnail(job);
+
+        // The renderer only writes the PNG; persist the result so the UI stops
+        // showing the "rendering" spinner and starts using the generated image.
+        db.prepare(`
+          UPDATE models
+          SET thumbnail_path = ?, thumbnail_status = 'completed', updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `).run(thumbnailPath, job.modelId);
+
+        return;
       } catch (err: any) {
         lastError = err;
         console.warn(`[SLAG3D Queue] Attempt ${attempt} failed for model ${job.modelId}:`, err?.message || err);

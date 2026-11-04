@@ -24,8 +24,8 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
       return;
     }
 
-    if (newPassword.length < 6) {
-      setError('New password must be at least 6 characters long');
+    if (newPassword.length < 12 || !/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) {
+      setError('New password must be at least 12 characters long and include one uppercase letter and one number');
       return;
     }
 
@@ -93,7 +93,7 @@ export const ChangePasswordModal: React.FC<ChangePasswordModalProps> = ({ onClos
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-300 mb-1">New Password (min 6 chars)</label>
+                <label className="block text-xs font-semibold text-neutral-300 mb-1">New Password (min 12 chars, 1 uppercase, 1 number)</label>
                 <input
                   type="password"
                   autoComplete="new-password"

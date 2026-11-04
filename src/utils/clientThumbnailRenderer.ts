@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
+import { ThreeMFLoader } from 'three/examples/jsm/loaders/3MFLoader.js';
 import { apiFetch, getStoredToken } from './api';
 
 // Cache of model IDs currently being processed client-side to prevent duplicates
@@ -118,6 +119,18 @@ export async function renderThumbnailInBrowser(
         }
       });
       await fitAndRender(obj);
+    } else if (ext === '3mf') {
+      const loader = new ThreeMFLoader();
+      if (storedAuthToken) {
+        loader.setRequestHeader({ Authorization: `Bearer ${storedAuthToken}` });
+      }
+      const group = await loader.loadAsync(filePath);
+      group.traverse((child) => {
+        if ((child as THREE.Mesh).isMesh) {
+          (child as THREE.Mesh).material = material;
+        }
+      });
+      await fitAndRender(group);
     } else {
       const geom = new THREE.DodecahedronGeometry(20, 0);
       const mesh = new THREE.Mesh(geom, material);

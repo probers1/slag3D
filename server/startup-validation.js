@@ -1,110 +1,93 @@
 #!/usr/bin/env node
 /**
- * SECURITY FIX #1 - Startup Validation
- * 
- * This script runs at container boot time and HARD BLOCKS startup if
- * any required security secrets are missing or weak.
- * 
- * The container will exit with code 1 instead of starting the server,
- * preventing insecure deployments from ever accepting connections.
+ * Docker container startup validation.
+ *
+ * Runs before the server starts and hard-blocks startup when required
+ * security secrets are missing, too short, or obviously weak. This prevents
+ * containers from accepting connections with placeholder credentials.
  */
 
-import { readFileSync, constants } from 'fs';
-
-console.error('='.repeat(70));
-console.error(' SLAG3D — Security Startup Validation');
-console.error('='.repeat(70));
-
 const REQUIRED_ENV_VARS = [
-  { name: 'JWT_SECRET', minLength: 64 },          // 256 bits of entropy
-  { name: 'REFRESH_TOKEN_SECRET', minLength: 64 },
-  { name: 'SESSION_SECRET', minLength: 64 },
+  { name: 'JWT_SECRET', minLength: 32 },
+  { name: 'REFRESH_TOKEN_SECRET', minLength: 32 },
+  { name: 'SESSION_SECRET', minLength: 32 },
 ];
 
 const WEAK_PATTERNS = [
   'password', 'admin123', 'secret', 'example', 'changeme',
   'placeholder', '<generate', 'your-', 'default', 'test', 'demo',
-  'super-secret-key', 'my-super-secret-key', 'slags3d', 'slag3d'
+  '12345678', 'qwerty', 'letmein', 'paste-', '-here',
 ];
 
-/**
- * Validate that a secret environment variable is properly configured.
- */
-function validateSecret(name, value) {
+function validateSecret(name, value, minLength) {
   if (!value) {
-    throw new Error(`\n  FATAL: ${name} environment variable is NOT SET.`);
+    throw new Error(`Missing: ${name}`);
   }
 
-  if (value.length < 32) {
+  if (value.length < minLength) {
     throw new Error(
-      `\n  FATAL: ${name} is only ${value.length} characters ` +
-      `long. Minimum required: 64 characters (256 bits of entropy).`
+      `${name} is only ${value.length} characters long. ` +
+      `Minimum required: ${minLength} characters.`
     );
   }
 
-  // Check for placeholder/example values
+  // Angle brackets only appear in the .env.example placeholders, never in
+  // output from `openssl rand -base64`.
+  if (value.includes('<') || value.includes('>')) {
+    throw new Error(`${name} still contains an .env.example placeholder.`);
+  }
+
   const lower = value.toLowerCase();
-  if (lower.includes('placeholder') || lower.includes('example') ||
-      lower.includes('changeme') || lower.includes('YOUR_')) {
-    throw new Error(
-      `\n  FATAL: ${name} appears to be a placeholder or example value.`
-    );
-  }
-
-  // Check for commonly leaked passwords (rockyou.txt top entries)
   for (const pattern of WEAK_PATTERNS) {
     if (lower.includes(pattern)) {
       throw new Error(
-        `\n  FATAL: ${name} contains weak pattern "${pattern}" and is being rejected.`
+        `${name} contains a weak or commonly-used substring: "${pattern}". ` +
+        `Use a randomly generated secret instead.`
       );
     }
   }
 
-  // Basic entropy estimation using character class diversity
-  const hasLower = /[a-z]/.test(lower);
-  const hasUpper = /[A-Z]/.test(lower);
-  const hasDigit = /[0-9]/.test(lower);
-  const hasSpecial = /[^a-zA-Z0-9]/.test(lower);
+  // Require at least two character classes so trivially predictable values
+  // such as long runs of a single character are rejected.
+  const charClassDiversity = [
+    /[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/,
+  ].reduce((acc, regex) => acc + (regex.test(value) ? 1 : 0), 0);
 
-  if (hasLower && hasUpper && hasDigit && hasSpecial) {
-    console.error(`  ✓ ${name}: ${value.length} chars, multi-class entropy`);
-  } else {
-    console.error(
-      `  ⚠ ${name}: lacks character variety. Consider using a longer random secret.`
+  if (charClassDiversity < 2) {
+    throw new Error(
+      `${name} lacks character variety. Include at least two of: ` +
+      `lowercase, uppercase, digits, special characters.`
     );
   }
-
-  return true;
 }
 
-// Run validation
-let allPassed = true;
+console.log('='.repeat(60));
+console.log(' SLAG3D — Security Startup Validation');
+console.log('='.repeat(60));
 
 try {
   for (const { name, minLength } of REQUIRED_ENV_VARS) {
-    validateSecret(name, process.env[name]);
+    validateSecret(name, process.env[name], minLength);
+    console.log(`  ✓ Valid: ${name}`);
   }
 } catch (err) {
-  console.error(`\n\n  ┌──────────────────────────────────────────────────┐`);
-  console.error(`  │     CRITICAL SECURITY BLOCK ⛔                   │`);
-  console.error(`  └──────────────────────────────────────────────────┘`);
-  console.error('\n  The container has been shut down.');
   console.error('');
-  console.error('  To fix, restart with proper secrets:');
+  console.error('='.repeat(60));
+  console.error('  CRITICAL SECURITY FAILURE: Startup validation failed.');
+  console.error('='.repeat(60));
   console.error('');
-  console.error('    docker run -e JWT_SECRET="$(openssl rand -base64 52)" \\\\');
-  console.error('              -e REFRESH_TOKEN_SECRET="$(openssl rand -base64 52)" \\\\-');
-  console.error('              -e SESSION_SECRET="$(openssl rand -base64 52)" \\\\-');
-  console.error('              your-image:latest');
+  console.error(`  ${err.message}`);
   console.error('');
-  console.error('  Or use Docker secrets (dumb-init compatible):');
-  console.error('    docker run -v /var/run/secrets/myapp/jwt:/run/secrets/jwt \\\\');
-  console.error('              -e JWT_SECRET="$(cat /run/secrets/jwt)" ...');
-  console.error('\n  ──────────────────────────────────────────────────');
-  console.error(`\n  Error: ${err.message.split('\n')[0]}`);
+  console.error('The container has been shut down to prevent insecure operation.');
+  console.error('');
+  console.error('Generate strong secrets with:');
+  console.error('  openssl rand -base64 52');
+  console.error('');
+  console.error('Then set JWT_SECRET, REFRESH_TOKEN_SECRET and SESSION_SECRET');
+  console.error('as environment variables for the container.');
+  console.error('');
   process.exit(1);
 }
 
-console.error('');
-console.error('  ✓ All security checks passed. Starting application...');
-process.exit(0);
+console.log('');
+console.log('All security checks passed. Starting application...');
