@@ -20,15 +20,6 @@ export function setStoredToken(token: string | null) {
   } catch {}
 }
 
-export function getStoredUser<T>(): T | null {
-  try {
-    const raw = localStorage.getItem(USER_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 export function setStoredUser<T>(user: T | null) {
   try {
     if (user) {

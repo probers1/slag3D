@@ -10,7 +10,6 @@ import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
 import { apiFetch, getStoredToken, setStoredToken, setStoredUser, getStoredCsrfToken, setStoredCsrfToken } from './utils/api';
-import { useVaultData } from './hooks/useVaultData';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);

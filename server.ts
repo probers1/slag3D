@@ -24,15 +24,6 @@ import { getTagsWithCounts } from './server/lib/tags.ts';
 // GLOBAL RATE LIMITING MIDDLEWARE
 // =============================================================================
 
-// 1. Authentication/Login endpoints (Most likely targets for brute force)
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // Limit each IP to 5 login attempts per windowMs
-  message: { error: 'Too many login attempts from this IP, please try again after 15 minutes.' },
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 // 2. General API Endpoints (Models, Collections, etc.) - Moderate limiting
 const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute

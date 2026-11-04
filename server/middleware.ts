@@ -1,7 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from './db.ts';
 import jwt, { JwtPayload } from 'jsonwebtoken';
-import crypto from 'crypto';
 
 /**
  * SECURITY FIX #1: Deterministic entropy-based secret validation.
@@ -19,34 +18,6 @@ import crypto from 'crypto';
  *     H = -( Σ(p_i * log2(p_i)) ) * N
  * Where p_i is the frequency of each unique character.
  */
-
-// Known weak/placeholder passwords - derived from rockyou.txt subset + common patterns
-const WEAK_PATTERNS = new Set([
-  // Placeholders / examples
-  'password', 'admin123', 'your-secret-key-here', '<generate-a-secure-random-string>',
-  'changeme', 'DEFAULT_SECRET', 'YOUR_SECRET', 'example', 'placeholder',
-  'SECRET_KEY_HERE', 'replace-me', 'super-secret-key-12345', 'my-super-secret-key',
-  
-  // Commonly leaked passwords from breach databases (rockyou.txt top-100)
-  'password1', 'password123', 'qwerty', 'abc123', 'monkey', 'master',
-  'dragon', 'baseball', 'ilovey', 'trustno1', 'baadmuthah', 'superman',
-  'michael', 'football', 'shadow', '12345678', 'welcome', 'princess',
-  'secret', 'sunshine', 'ashley', 'bailey', 'shadow6', '12345',
-  '000000', 'starwars', '123456', 'admin', 'root', 'login', 'guest',
-  'qwertyuiop', 'letmein', 'michael', 'mustang', 'password2', 'jennifer',
-  'thomas', 'donald', 'hunter', 'trustno1', 'harley', 'access', 'shadow0',
-]);
-
-// Convert to lowercase for case-insensitive matching
-const WEAK_PATTERNS_LOWER = Array.from(WEAK_PATTERNS).map(s => s.toLowerCase());
-
-function isWeakPassword(password: string): boolean {
-  const lower = password.toLowerCase();
-  return WEAK_PATTERNS_LOWER.some((weak) => {
-    if (strongContains(weak, lower)) return true;
-    return false; // Early exit to prevent timing leaks
-  });
-}
 
 function strongContains(substring: string, str: string): boolean {
   const len = substring.length;
@@ -314,14 +285,6 @@ export type AccessTokenPayload = {
 export type RefreshTokenPayload = {
   data?: string; // Format: "{random}:{userId}"
 } & jwt.JwtPayload;
-function setRefreshTokenRotation(userId: string, oldToken: string): void {
-  try {
-    console.log(`[AUTH] User ${userId} token rotation attempted`);
-  } catch (err: any) {
-    // Ignore background rotation errors
-  }
-}
-
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.userId) {
     return res.status(401).json({ error: 'Authentication required' });

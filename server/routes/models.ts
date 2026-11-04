@@ -23,16 +23,6 @@ const uploadLimiter = rateLimit({
   standardHeaders: true,
 });
 
-/**
- * Rate limiter for collection operations
- */
-const collectionLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 50, // Maximum 50 collection ops per hour per IP
-  message: { error: 'Too many collection requests. Please slow down.' },
-  standardHeaders: true,
-});
-
 // Helper to associate tags with a model
 export function syncModelTags(modelId: string, tagsInput: string | string[]) {
   let tagList: string[] = [];
