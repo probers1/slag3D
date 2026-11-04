@@ -97,18 +97,19 @@ install_nodejs() {
     fi
 }
 
-# 3. Install system dependencies
+# 3. Install system dependencies (includes python3-setuptools for node-gyp build support)
 install_dependencies() {
     log_info "Updating apt package repositories..."
     apt-get update -y
 
-    log_info "Installing system libraries and Chromium runtime..."
+    log_info "Installing system libraries, build tools, and Chromium runtime..."
     apt-get install -y --no-install-recommends \
       ca-certificates curl gnupg git build-essential \
-      p7zip-full chromium libnss3 libxss1 libasound2 \
-      libatk-bridge2.0-0 libgtk-3-0 libgbm1 libdrm2 \
-      libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
-      libxrandr2 libpango-1.0-0 libcairo2 dnsutils sqlite3
+      python3 python3-setuptools p7zip-full chromium \
+      libnss3 libxss1 libasound2 libatk-bridge2.0-0 \
+      libgtk-3-0 libgbm1 libdrm2 libxkbcommon0 \
+      libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+      libpango-1.0-0 libcairo2 dnsutils sqlite3
 }
 
 # 4. Setup configuration and secrets
