@@ -194,7 +194,11 @@ if (!isProduction) {
   });
   app.use(vite.middlewares);
 } else {
-  const distDir = path.resolve(__dirname, 'dist');
+  // If running from bundled dist/server.js, __dirname is already /opt/slag3D/dist
+  const distDir = __dirname.endsWith('dist')
+    ? __dirname
+    : path.resolve(__dirname, 'dist');
+
   app.use(express.static(distDir));
   app.get('*', (req, res) => {
     res.sendFile(path.resolve(distDir, 'index.html'));
