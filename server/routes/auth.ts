@@ -117,7 +117,7 @@ router.post('/login', authLimiter, (req, res) => {
   
   res.cookie('slag3d_csrf_token', csrfToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: req.secure,
     sameSite: 'strict',
     maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
   });
@@ -183,7 +183,7 @@ router.post('/refresh', authRefreshLimiter, (req, res) => {
   
   res.cookie('slag3d_csrf_token', csrfToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: req.secure,
     sameSite: 'strict',
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
@@ -266,7 +266,7 @@ router.get('/csrf-token', (req, res) => {
     // Set cookie for the client
     res.cookie('slag3d_csrf_token', csrfToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });

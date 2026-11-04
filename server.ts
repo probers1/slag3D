@@ -138,7 +138,10 @@ app.use(
     cookie: {
       maxAge: parseInt(process.env.SESSION_EXPIRY_MINUTES || '1440', 10) * 60 * 1000,
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      // 'auto' sets the Secure flag only for HTTPS requests. Hard-coding this
+      // to NODE_ENV breaks session auth when production runs over plain HTTP
+      // (for example on a local network or a TLS-terminating proxy).
+      secure: 'auto',
       sameSite: 'strict',
       path: '/',
     },
