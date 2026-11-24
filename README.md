@@ -11,7 +11,8 @@ A self-hosted mesh repository and dashboard for 3D printer models, print farms, 
 | **Headless Thumbnail Engine** | Puppeteer + Three.js → 512×512 PNGs (concurrency: 2, exponential retry) |
 | **3D Model Viewer** | Embedded Three.js viewer (.stl, .3mf, .obj with OrbitControls, wireframe toggle) |
 | **Mesh Analytics** | Bounding box, volume ($cm^3$), weight estimate, filament cost calculator |
-| **Archive Extraction** | Multi-file uploads (.zip, .7z → auto-extract, detect primary 3D file) |
+| **Archive Extraction** | Multi-file uploads (.zip, .7z → auto-extract, detect primary 3D file; PDFs kept alongside models) |
+| **PDF Documents** | Standalone PDF items and model attachments with an in-app pdf.js reader (page navigation, zoom, rotate, text search) and first-page previews |
 | **Collections & Folders** | Nested folder hierarchy with model organization |
 | **Dual Authentication** | Session cookies + JWT Bearer tokens (iframe-safe) |
 | **Admin Panel** | User management, provisioning, password resets |
@@ -64,21 +65,24 @@ Generate secret: `openssl rand -base64 52`
 
 ## File Uploads
 
-**Allowed**: `.stl`, `.3mf`, `.obj`, `.zip`, `.7z` (max 300MB)  
+**Allowed**: `.stl`, `.3mf`, `.obj`, `.pdf`, `.zip`, `.7z` (max 300MB per file, 20 files per upload)  
 **Rate Limit**: 30 requests/hour per IP  
 
-Security checks block executables, scripts, image files.
+PDFs may be uploaded directly, added to an existing model, or included in `.zip`/`.7z` archives
+alongside 3D files. A PDF-only upload becomes a standalone document item; PDFs attached to a
+model stay attachments and never replace its primary 3D file. Security checks block executables,
+scripts, and image files, including inside archives.
 
 ---
 
 ## Database Schema
 
 ```sql
-users, models, files, tags, model_tags, 
+users, models (item_type: model | document), files, tags, model_tags, 
 favorites, collections, collection_models, auth_tokens
 ```
 
-Schema version **4** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
+Schema version **5** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
 
 ---
 
@@ -86,7 +90,7 @@ Schema version **4** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| GET | `/api/models` | ✓ | Paginated search (search, tags, filters) |
+| GET | `/api/models` | ✓ | Paginated search over title, description and attachment filenames (tags, filters) |
 | POST | `/api/models` | ✓ | Multi-file upload or archive extraction |
 | POST | `/api/auth/login` | — | Returns access + refresh tokens |
 | POST | `/api/auth/refresh` | ✓ | Token rotation endpoint |
@@ -153,5 +157,5 @@ works when the current password is unknown or the account was soft-deleted.
 - Documentation: See related guides below
 
 ---
-**Version**: 4 (Soft delete active)  
+**Version**: 5 (PDF documents active)  
 **Last Updated**: Nov 2026
