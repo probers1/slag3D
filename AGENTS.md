@@ -21,7 +21,9 @@
 - Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm run test:prod-paths && npm run test:pdf-thumbnail && npm run test:tag-management && npm test`.
 - `npm run set-admin -- 'NewPassword'` creates/resets the account named by `ADMIN_USER` (default
   `admin`) in the existing SQLite DB, restores it if soft-deleted, and works while the server is
-  running. `npm run update` runs `scripts/update.sh`.
+  running. `npm run update` runs `scripts/update.sh`, which fetches origin, checks out the remote
+  default branch (`main` unless `SLAG3D_UPDATE_BRANCH` overrides), fast-forwards to its HEAD, then
+  reinstalls/builds/restarts and waits for the healthcheck; there are no version tags in the repo.
 
 ## Layout & wiring
 
@@ -102,4 +104,5 @@
   run here.
 - Deployment: the LXC installer expects the repo cloned to `/opt/slag3D`; `docker compose up -d`
   needs the three secrets in `.env` and creates volumes `slag3d_vault_data` / `slag3d_vault_uploads`.
-  More detail in `README.md`, `MIGRATION_GUIDE.md`, and `SECURITY_GUIDE.md`.
+  `scripts/install-lxc.sh --update` delegates to `npm run update`'s script, so both paths use the
+  same fast-forward check. More detail in `README.md`, `MIGRATION_GUIDE.md`, and `SECURITY_GUIDE.md`.

@@ -10,6 +10,7 @@ SCRIPT_NAME="slag3d-install"
 
 # Global Environment Variables
 APP_DIR="${APP_DIR:-/opt/slag3D}"
+DATA_DIR_OVERRIDE="${DATA_DIR:-}"
 DATA_DIR="${DATA_DIR:-${APP_DIR}/data}"
 UPLOADS_DIR="${UPLOADS_DIR:-${APP_DIR}/uploads}"
 
@@ -456,20 +457,31 @@ main() {
 }
 
 # Rebuild / update flag execution handler
-if [ "${1:-}" = "--update" ] && [ -f "/opt/slag3D/package.json" ]; then
+if [ "${1:-}" = "--update" ]; then
+    INSTALL_DIR="${SLAG3D_APP_DIR:-$APP_DIR}"
+    APP_DIR="$INSTALL_DIR"
+    DATA_DIR="${DATA_DIR_OVERRIDE:-${INSTALL_DIR}/data}"
+
+    [ -f "$INSTALL_DIR/package.json" ] || {
+        log_error "No SLAG3D installation found at $INSTALL_DIR."
+        exit 1
+    }
+    [ -f "$INSTALL_DIR/scripts/update.sh" ] || {
+        log_error "Missing $INSTALL_DIR/scripts/update.sh; cannot perform a safe update."
+        exit 1
+    }
+
     log_info "Updating SLAG3D installation..."
-    cd /opt/slag3D
-    git pull 2>/dev/null || true
-    npm ci || npm install
-    npm run build
-    npm prune --omit=dev
+    SLAG3D_APP_DIR="$INSTALL_DIR" bash "$INSTALL_DIR/scripts/update.sh" || exit 1
+
+    cd "$INSTALL_DIR"
+    npm prune --omit=dev || true
     rm -rf ~/.npm ~/.cache
-    systemctl restart slag3D.service
-    if wait_for_api 3000; then
-        UPDATE_ADMIN_USER=$(read_env_value "ADMIN_USER" "/opt/slag3D/.env" "admin")
-        UPDATE_ADMIN_PASSWORD=$(read_env_value "ADMIN_PASSWORD" "/opt/slag3D/.env" "")
-        sync_admin_credentials "$UPDATE_ADMIN_USER" "$UPDATE_ADMIN_PASSWORD" 3000 || true
-    fi
+
+    UPDATE_ADMIN_USER=$(read_env_value "ADMIN_USER" "$INSTALL_DIR/.env" "admin")
+    UPDATE_ADMIN_PASSWORD=$(read_env_value "ADMIN_PASSWORD" "$INSTALL_DIR/.env" "")
+    sync_admin_credentials "$UPDATE_ADMIN_USER" "$UPDATE_ADMIN_PASSWORD" 3000 || true
+
     log_success "Update complete. Service restarted."
     exit 0
 fi
