@@ -135,14 +135,17 @@ export async function initDatabase(): Promise<void> {
   }
 
   // Repair schema skew that the version-based runner cannot see. A database
-  // created by a newer build may report a higher schema version (so migration
-  // v5 gets skipped) yet lack `models.item_type`. Ensure the column exists
-  // before any code queries it, without touching the stored version number.
+  // created by a newer build may report a higher schema version (so migrations
+  // v5/v6 get skipped) yet lack `models.item_type` or the tag metadata columns.
+  // Ensure both exist before any code queries them, without touching the stored
+  // version number.
   try {
     const { ensureItemTypeColumn } = await import('./migrations/005_add_item_type.ts');
+    const { ensureTagMetadata } = await import('./migrations/006_add_tag_metadata.ts');
     ensureItemTypeColumn(db);
+    ensureTagMetadata(db);
   } catch (err: any) {
-    throw new Error('Failed to ensure models.item_type column: ' + (err?.message || err));
+    throw new Error('Failed to ensure required schema columns: ' + (err?.message || err));
   }
 
   // Seed default admin user if GOOSE_SEED_DB=true and no users exist
@@ -206,6 +209,8 @@ function applyFallbackTables(): void {
     CREATE TABLE IF NOT EXISTS tags (
       id TEXT PRIMARY KEY,
       name TEXT UNIQUE NOT NULL COLLATE NOCASE,
+      color TEXT NOT NULL DEFAULT '#60a5fa',
+      description TEXT NOT NULL DEFAULT '',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -254,16 +259,17 @@ function applyFallbackTables(): void {
     CREATE INDEX IF NOT EXISTS idx_files_model_id ON files(model_id);
     CREATE INDEX IF NOT EXISTS idx_collections_user_id ON collections(user_id);
     CREATE INDEX IF NOT EXISTS idx_collections_parent ON collections(parent_folder_id);
+    CREATE INDEX IF NOT EXISTS idx_model_tags_tag_id ON model_tags(tag_id);
   `);
 
   // Record latest schema version
   const currentVersionRow = db.prepare(`SELECT version FROM schema_versions WHERE id = 1`).get() as { version?: number } | null;
   if (!currentVersionRow) {
-    db.prepare(`INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)`).run(5, new Date().toISOString());
+    db.prepare(`INSERT INTO schema_versions (id, version, applied_at) VALUES (1, ?, ?)`).run(6, new Date().toISOString());
   } else {
-    db.prepare(`UPDATE schema_versions SET version = 5, applied_at = ? WHERE id = 1`).run(new Date().toISOString());
+    db.prepare(`UPDATE schema_versions SET version = 6, applied_at = ? WHERE id = 1`).run(new Date().toISOString());
   }
 
-  console.log('[MIGRATIONS] Fallback tables created with full schema (v5)\n');
+  console.log('[MIGRATIONS] Fallback tables created with full schema (v6)\n');
 }
 

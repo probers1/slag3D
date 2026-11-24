@@ -1,11 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { X, Upload, FileCode, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
-import { CollectionItem } from '../types';
+import { CollectionItem, TagItem } from '../types';
+import { TagInput } from './TagInput';
 import { apiFetch } from '../utils/api';
 
 interface UploadModalProps {
   collections: CollectionItem[];
+  availableTags: TagItem[];
   onClose: () => void;
   onUploadSuccess: () => void;
 }
@@ -19,6 +21,7 @@ type UploadErrorDetail = {
 
 export const UploadModal: React.FC<UploadModalProps> = ({
   collections,
+  availableTags,
   onClose,
   onUploadSuccess,
 }) => {
@@ -314,13 +317,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
             <div>
               <label className="block text-xs font-semibold text-neutral-300 mb-1">Tags (comma-separated)</label>
-              <input
-                type="text"
-                placeholder="e.g. toolhead, voron, extruder, 3dprinter"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                className="w-full bg-[#131317] border border-[#343444] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-              />
+              <TagInput value={tags} onChange={setTags} suggestions={availableTags} />
             </div>
 
             <div>

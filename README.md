@@ -13,6 +13,7 @@ A self-hosted mesh repository and dashboard for 3D printer models, print farms, 
 | **Mesh Analytics** | Bounding box, volume ($cm^3$), weight estimate, filament cost calculator |
 | **Archive Extraction** | Multi-file uploads (.zip, .7z → auto-extract, detect primary 3D file; PDFs kept alongside models) |
 | **PDF Documents** | Standalone PDF items and model attachments with an in-app pdf.js reader (page navigation, zoom, rotate, text search for text-based PDFs) and first-page previews |
+| **Tag Registry** | Global colored tags with notes, usage counts, a manager page, and colored chips on items and filters |
 | **Collections & Folders** | Nested folder hierarchy with model organization |
 | **Dual Authentication** | Session cookies + JWT Bearer tokens (Bearer fallback supports embedded/non-cookie contexts) |
 | **Admin Panel** | User management, provisioning, password resets |
@@ -76,14 +77,29 @@ scripts, and image files, including inside archives.
 
 ---
 
+## Tags
+
+Tags are global and shared by models and documents. Names are lowercased, whitespace becomes a
+dash, and duplicates are merged case-insensitively (max 40 characters). Each tag can have a color
+and a short note (max 200 characters).
+
+- Logged-in users can create tags and assign them to their own items during upload or metadata edit.
+- Admins can rename, recolor, annotate, and delete global tags from the **Tags** tab.
+- Deleting a tag detaches it from every item; items themselves are not deleted. Unused tags remain
+  visible in the registry until deleted.
+- Non-owners can browse tags and items, but only owners/admins can change an item's tags.
+
+---
+
 ## Database Schema
 
 ```sql
-users, models (item_type: model | document), files, tags, model_tags,
+users, models (item_type: model | document), files,
+tags (color, description), model_tags,
 favorites, collections, collection_models, auth_tokens, schema_versions
 ```
 
-Schema version **5** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
+Schema version **6** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
 
 ---
 
@@ -93,8 +109,16 @@ Schema version **5** — see [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md)
 |--------|----------|------|-------------|
 | GET | `/api/models` | ✓ | Paginated search over title, description and attachment filenames (tags, filters) |
 | POST | `/api/models` | ✓ | Multi-file upload or archive extraction |
+| GET | `/api/tags` | — | Public tag registry with usage counts |
+| GET | `/api/tags/:id` | — | Public single-tag read |
+| POST | `/api/tags` | ✓ | Create or reuse a global tag |
+| PUT | `/api/tags/:id` | Admin | Rename, recolor, or annotate a tag |
+| DELETE | `/api/tags/:id` | Admin | Delete a tag and detach it from all items |
 | POST | `/api/auth/login` | — | Returns access + refresh tokens |
 | POST | `/api/auth/refresh` | Bearer refresh token | Rotates refresh token and returns a new access token |
+
+`✓` means any logged-in user. Unsafe methods still require the CSRF header; see
+[SECURITY_GUIDE.md](./SECURITY_GUIDE.md).
 
 No separate API reference is checked in; see `server/routes/*.ts` and the root
 [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) / [SECURITY_GUIDE.md](./SECURITY_GUIDE.md).

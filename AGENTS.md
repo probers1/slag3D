@@ -11,12 +11,14 @@
   middleware).
 - `npm run typecheck` (`tsc --noEmit`, no output). There is **no** lint or format script.
 - Tests: `npm test` (password smoke), `npm run test:upload-security`, `npm run test:prod-paths`,
-  `npm run test:pdf-thumbnail`.
+  `npm run test:pdf-thumbnail`, `npm run test:tag-management`.
   - `test:prod-paths` needs `dist/index.html` from `npm run build:client`; it rebuilds the server
     bundle itself and boots it in a temp directory.
   - `test:pdf-thumbnail` renders a generated PDF and asserts a non-blank 512×512 PNG.
+  - `test:tag-management` migrates a temp DB and checks normalization, CRUD validation, unused-tag
+    visibility, and cascade detachment.
   - `tests/priority{1,2,3}_fixes.test.ts` have no npm script: `npx tsx tests/priority1_fixes.test.ts`.
-- Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm run test:prod-paths && npm run test:pdf-thumbnail && npm test`.
+- Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm run test:prod-paths && npm run test:pdf-thumbnail && npm run test:tag-management && npm test`.
 - `npm run set-admin -- 'NewPassword'` creates/resets the account named by `ADMIN_USER` (default
   `admin`) in the existing SQLite DB, restores it if soft-deleted, and works while the server is
   running. `npm run update` runs `scripts/update.sh`.
@@ -45,15 +47,16 @@
 
 ## Database & migrations
 
-- Dev `./data/vault.db`, prod `/data/vault.db`; `DB_PATH` overrides. Current schema version **5**.
+- Dev `./data/vault.db`, prod `/data/vault.db`; `DB_PATH` overrides. Current schema version **6**.
 - A migration is `server/migrations/NNN_*.ts` returning `{version, timestamp}`. Register it in the
   array in `server/migrations/index.ts` **and** mirror new columns in `applyFallbackTables()` in
-  `server/db.ts`. v3 was abandoned; v4 = user soft-delete; v5 = `models.item_type`.
+  `server/db.ts`. v3 was abandoned; v4 = user soft-delete; v5 = `models.item_type`;
+  v6 = `tags.color`, `tags.description`, and `idx_model_tags_tag_id`.
 - The runner skips migrations where `schemaVersion >= migrationVersion`. Real DBs may report a
-  higher version from another build (e.g. one with `page_count`), so `models.item_type` is also
-  added by idempotent `ensureItemTypeColumn()` called unconditionally from `initDatabase()` —
-  do not remove it or rely on the version check alone. Follow this repair pattern for any new
-  column code queries immediately.
+  higher version from another build (e.g. one with `page_count`), so `models.item_type` and the tag
+  metadata columns are also repaired by idempotent `ensureItemTypeColumn()` / `ensureTagMetadata()`
+  called unconditionally from `initDatabase()` — do not remove them or rely on the version check
+  alone. Follow this repair pattern for any new column code queries immediately.
 - Admin seeding only runs when `users` is empty; an existing DB keeps its old password even if
   `.env` changes. Reset with `npm run set-admin`, not by deleting `data/`.
 
@@ -62,10 +65,21 @@
 - Auth resolves from the session cookie or a JWT supplied as `Authorization: Bearer`, `x-auth-token`,
   or query `token` (`refresh` tokens are also accepted as bearer); access 1h, refresh 7d.
 - Unsafe `/api` methods require `x-csrf-token` to match the `slag3d_csrf_token` cookie, except the
-  exempt auth/health/tags paths in `server/middleware.ts`; the frontend's `apiFetch()`
+  exempt auth/health paths in `server/middleware.ts`; the frontend's `apiFetch()`
   (`src/utils/api.ts`) adds Bearer + CSRF. Media anchors can append `?token=`.
 - `GET /api/models` searches title, description **and attachment filenames**. `item_type` is
   `model | document`; collections/favorites are unchanged by PDFs.
+
+## Tags
+
+- `server/lib/tags.ts` is canonical: lowercase/whitespace-to-dash normalization, case-insensitive
+  dedupe, 40-char names, 200-char descriptions, and transactional `syncModelTags()` for item edits.
+- `server/routes/tags.ts` serves `GET /api/tags` (public, includes unused tags), `GET /api/tags/:id`,
+  logged-in `POST /api/tags` (idempotent create), and admin-only `PUT`/`DELETE`. Tag deletion cascades
+  to `model_tags`, detaching it from every item; no items are deleted.
+- The dedicated Tags view is `src/components/TagsPanel.tsx` (`activeTab === 'tags'`). `TagInput.tsx`
+  supplies colored suggestions in the upload modal and item detail editor. Managers can pick a color
+  and add a note; non-admins cannot change global metadata.
 
 ## PDF documents
 

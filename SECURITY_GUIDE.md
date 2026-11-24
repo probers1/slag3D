@@ -66,7 +66,8 @@ openssl rand -base64 52   # use as SESSION_SECRET
 - The token is returned in login/refresh responses and set in a cookie; retrieve it with
   `GET /api/auth/csrf-token`.
 - Required on unsafe (POST/PUT/DELETE/…) `/api` requests **except** `/api/auth/login`,
-  `/api/auth/refresh`, `/api/auth/logout`, `/api/health`, and `/api/tags`.
+  `/api/auth/refresh`, `/api/auth/logout`, and `/api/health`. Tag mutations under `/api/tags` are
+  protected; only the safe GET is public.
 
 ### 3. Token Rotation ✅
 - Refresh tokens are replaced on every refresh; logout deletes all refresh tokens for the user.
@@ -85,6 +86,13 @@ openssl rand -base64 52   # use as SESSION_SECRET
 - Logout destroys the session and deletes stored refresh tokens.
 - Password change/reset deletes refresh tokens only; already-issued access JWTs and existing session
   rows remain valid until their own expiry or a corresponding secret rotation.
+
+### 6. Tag Permissions ✅
+- `GET /api/tags` and `GET /api/tags/:id` are public.
+- Any logged-in user can `POST /api/tags` to create/reuse a global tag and can attach tags to items
+  they own; names are normalized and deduplicated case-insensitively.
+- `PUT /api/tags/:id` and `DELETE /api/tags/:id` require admin privileges. Deleting a tag cascades to
+  `model_tags`, detaching it from items without deleting them.
 
 ## Security Checklist
 

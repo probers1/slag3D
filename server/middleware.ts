@@ -303,7 +303,9 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
 }
 
 // Paths that bypass CSRF validation (token issued/used via Bearer header or public endpoints)
-const CSRF_EXEMPT_PREFIXES = ['/api/auth/login', '/api/auth/refresh', '/api/auth/csrf-token', '/api/auth/logout', '/api/health', '/api/tags'];
+// `/api/tags` is intentionally NOT exempt: GET is safe and passes the isSafe
+// check below, while tag mutations must still satisfy double-submit CSRF.
+const CSRF_EXEMPT_PREFIXES = ['/api/auth/login', '/api/auth/refresh', '/api/auth/csrf-token', '/api/auth/logout', '/api/health'];
 
 /**
  * CSRF double-submit protection for unsafe /api methods.

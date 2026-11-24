@@ -31,7 +31,8 @@ import {
   Upload,
   FileText,
 } from 'lucide-react';
-import { ModelFile, CollectionItem } from '../types';
+import { ModelFile, CollectionItem, TagItem } from '../types';
+import { TagInput } from './TagInput';
 import { apiFetch, getStoredToken } from '../utils/api';
 import { isPdfFile } from '../utils/fileTypes';
 
@@ -58,6 +59,7 @@ interface ModelDetail {
 interface ModelViewerModalProps {
   modelId: string;
   collections: CollectionItem[];
+  availableTags: TagItem[];
   currentUserId?: string;
   isAdmin?: boolean;
   onClose: () => void;
@@ -67,6 +69,7 @@ interface ModelViewerModalProps {
 export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   modelId,
   collections,
+  availableTags,
   currentUserId,
   isAdmin,
   onClose,
@@ -1109,12 +1112,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                       placeholder="Description"
                       className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
                     />
-                    <input
-                      type="text"
+                    <TagInput
                       value={editTags}
-                      onChange={(e) => setEditTags(e.target.value)}
+                      onChange={setEditTags}
+                      suggestions={availableTags}
                       placeholder="Tags (comma separated)"
-                      className="bg-[#121214] border border-[#353545] rounded px-2.5 py-1.5 text-xs text-white"
                     />
                     <div className="flex items-center justify-end gap-2 mt-1">
                       <button
@@ -1139,14 +1141,24 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     </p>
                     {model?.tags && model.tags.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-1">
-                        {model.tags.map((t) => (
-                          <span
-                            key={t}
-                            className="px-2 py-0.5 bg-[#252530] text-neutral-300 text-[10px] rounded font-medium"
-                          >
-                            #{t}
-                          </span>
-                        ))}
+                        {model.tags.map((name) => {
+                          const color =
+                            availableTags.find(
+                              (tag) => tag.name.toLowerCase() === name.toLowerCase()
+                            )?.color || '#60a5fa';
+                          return (
+                            <span
+                              key={name}
+                              className="flex items-center gap-1.5 px-2 py-0.5 bg-[#252530] border border-[#333340] text-neutral-300 text-[10px] rounded font-medium"
+                            >
+                              <span
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{ backgroundColor: color }}
+                              />
+                              #{name}
+                            </span>
+                          );
+                        })}
                       </div>
                     )}
                   </>

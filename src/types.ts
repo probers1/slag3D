@@ -45,5 +45,7 @@ export interface CollectionItem {
 export interface TagItem {
   id: string;
   name: string;
+  color: string;
+  description: string;
   count: number;
 }

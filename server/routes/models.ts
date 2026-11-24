@@ -8,7 +8,7 @@ import { requireAuth } from '../middleware.ts';
 import { uploadMiddleware, processModelFiles } from '../upload.ts';
 import { enqueueThumbnailRender } from '../../lib/queue.ts';
 import rateLimit from 'express-rate-limit';
-import { getTagsWithCounts } from '../lib/tags.ts';
+import { getTagsWithCounts, syncModelTags } from '../lib/tags.ts';
 
 const router = Router();
 router.use(requireAuth);
@@ -23,39 +23,9 @@ const uploadLimiter = rateLimit({
   standardHeaders: true,
 });
 
-// Helper to associate tags with a model
-export function syncModelTags(modelId: string, tagsInput: string | string[]) {
-  let tagList: string[] = [];
-  if (Array.isArray(tagsInput)) {
-    tagList = tagsInput;
-  } else if (typeof tagsInput === 'string') {
-    try {
-      const parsed = JSON.parse(tagsInput);
-      if (Array.isArray(parsed)) tagList = parsed;
-      else tagList = tagsInput.split(',').map((t) => t.trim()).filter(Boolean);
-    } catch {
-      tagList = tagsInput.split(',').map((t) => t.trim()).filter(Boolean);
-    }
-  }
-
-  // Remove current tags
-  db.prepare('DELETE FROM model_tags WHERE model_id = ?').run(modelId);
-
-  const insertTagStmt = db.prepare('INSERT OR IGNORE INTO tags (id, name) VALUES (?, ?)');
-  const getTagStmt = db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE');
-  const linkStmt = db.prepare('INSERT OR IGNORE INTO model_tags (model_id, tag_id) VALUES (?, ?)');
-
-  for (const tag of tagList) {
-    const cleanTag = tag.trim().toLowerCase();
-    if (!cleanTag) continue;
-    const tagId = uuidv4();
-    insertTagStmt.run(tagId, cleanTag);
-    const existingTag = getTagStmt.get(cleanTag) as { id: string } | undefined;
-    if (existingTag) {
-      linkStmt.run(modelId, existingTag.id);
-    }
-  }
-}
+// Tag synchronization lives in server/lib/tags.ts so uploads, metadata edits
+// and tests share the same normalization and transaction.
+export { syncModelTags };
 
 // GET /api/tags — Returns active tag list with usage counts
 router.get('/tags', (req, res) => {

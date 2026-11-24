@@ -18,7 +18,7 @@ import authRouter from './server/routes/auth.ts';
 import adminRouter from './server/routes/admin.ts';
 import collectionsRouter from './server/routes/collections.ts';
 import modelsRouter from './server/routes/models.ts';
-import { getTagsWithCounts } from './server/lib/tags.ts';
+import tagsRouter from './server/routes/tags.ts';
 
 // =============================================================================
 // GLOBAL RATE LIMITING MIDDLEWARE
@@ -199,16 +199,11 @@ app.use('/api/auth', authRouter);
 app.use('/api/admin', apiLimiter, adminRouter);
 app.use('/api/collections', apiLimiter, collectionsRouter);
 app.use('/api/models', apiLimiter, modelsRouter);
+app.use('/api/tags', apiLimiter, tagsRouter);
 
 // Healthcheck endpoint (Unthrottled public endpoint)
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', service: 'SLAG3D Vault Server' });
-});
-
-// Tags endpoint with rate limiting applied
-app.get('/api/tags', apiLimiter, (req, res) => {
-  const tags = getTagsWithCounts();
-  res.json({ tags });
 });
 
 // Unmatched API routes must return JSON, not the SPA's index.html.

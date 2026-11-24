@@ -9,6 +9,7 @@ import { AdminModal } from './components/AdminModal';
 import { ChangePasswordModal } from './components/ChangePasswordModal';
 import { LoginModal } from './components/LoginModal';
 import { ModelViewerModal } from './components/ModelViewerModal';
+import { TagsPanel } from './components/TagsPanel';
 import { apiFetch, getStoredToken, setStoredToken, setStoredUser, getStoredCsrfToken, setStoredCsrfToken } from './utils/api';
 
 export default function App() {
@@ -16,7 +17,7 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false);
 
   // Filter and pagination state
-  const [activeTab, setActiveTab] = useState<'all' | 'mine' | 'favorites' | 'collections'>('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'mine' | 'favorites' | 'collections' | 'tags'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
@@ -99,7 +100,13 @@ export default function App() {
       const res = await apiFetch('/api/tags');
       if (res.ok) {
         const data = await res.json();
-        setTags(data.tags || []);
+        const list: TagItem[] = data.tags || [];
+        setTags(list);
+        setSelectedTag((current) =>
+          current && !list.some((tag) => tag.name.toLowerCase() === current.toLowerCase())
+            ? null
+            : current
+        );
       } else if (res.status === 401) {
         // Session expired - re-check auth  
         console.warn('[SLAG3D] Tags fetch returned 401');
@@ -118,7 +125,7 @@ export default function App() {
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: itemsPerPage.toString(),
-        filter: activeTab === 'collections' ? 'all' : activeTab,
+        filter: activeTab === 'collections' || activeTab === 'tags' ? 'all' : activeTab,
       });
 
       if (searchQuery.trim()) params.set('search', searchQuery.trim());
@@ -143,12 +150,15 @@ export default function App() {
   }, [currentUser, activeTab, searchQuery, selectedTag, selectedCollectionId, currentPage, itemsPerPage]);
 
   useEffect(() => {
+    if (authChecked) fetchTags();
+  }, [authChecked, fetchTags]);
+
+  useEffect(() => {
     if (currentUser) {
       fetchCollections();
-      fetchTags();
       // fetchModels is now handled inside the hook
     }
-  }, [currentUser, fetchCollections, fetchTags]);
+  }, [currentUser, fetchCollections]);
 
   // Fetch models whenever filters, pagination, or user context change
   useEffect(() => {
@@ -156,7 +166,7 @@ export default function App() {
   }, [fetchModels]);
 
   // Tab change handler (all, mine, favorites, collections)
-  const handleTabChange = (tab: 'all' | 'mine' | 'favorites' | 'collections') => {
+  const handleTabChange = (tab: 'all' | 'mine' | 'favorites' | 'collections' | 'tags') => {
     setActiveTab(tab);
     setCurrentPage(1);
     if (tab !== 'collections') {
@@ -266,6 +276,8 @@ export default function App() {
     );
   }
 
+  const activeTags = tags.filter((tag) => tag.count > 0);
+
   return (
     <div className="min-h-screen bg-[#121214] text-neutral-100 flex flex-col font-['DM_Sans',sans-serif] selection:bg-blue-600 selection:text-white">
       {/* Top Navigation Bar */}
@@ -300,6 +312,20 @@ export default function App() {
               Sign In to Access Vault
             </button>
           </div>
+        ) : activeTab === 'tags' ? (
+          <TagsPanel
+            tags={tags}
+            canCreate={!!currentUser}
+            isAdmin={currentUser?.role === 'admin'}
+            onRefresh={async () => {
+              await fetchTags();
+              await fetchModels();
+            }}
+            onSelectTag={(name) => {
+              setSelectedTag(name);
+              handleTabChange('all');
+            }}
+          />
         ) : (
           <>
             {/* Top Filter and Search Bar */}
@@ -378,7 +404,7 @@ export default function App() {
             </div>
 
             {/* Popular Tags strip */}
-            {tags.length > 0 && (
+            {activeTags.length > 0 && (
               <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
                 <span className="text-neutral-500 text-[11px] font-medium shrink-0 flex items-center gap-1">
                   <Tag className="w-3 h-3" /> Tags:
@@ -393,7 +419,7 @@ export default function App() {
                 >
                   All
                 </button>
-                {tags.map((t) => (
+                {activeTags.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => {
@@ -406,6 +432,10 @@ export default function App() {
                         : 'bg-[#1a1a22] text-neutral-400 hover:text-white hover:bg-[#22222c] border border-[#282834]'
                     }`}
                   >
+                    <span
+                      className="w-1.5 h-1.5 rounded-full shrink-0"
+                      style={{ backgroundColor: t.color || '#60a5fa' }}
+                    />
                     <span>#{t.name}</span>
                     <span className="text-[10px] text-neutral-500 font-mono">({t.count})</span>
                   </button>
@@ -472,6 +502,7 @@ export default function App() {
                       <ModelCard
                         key={m.id}
                         model={m}
+                        availableTags={tags}
                         onSelect={(id) => setSelectedModelId(id)}
                         onToggleFavorite={handleToggleFavorite}
                         onRetryThumbnail={handleRetryThumbnail}
@@ -535,6 +566,7 @@ export default function App() {
       {isUploadOpen && (
         <UploadModal
           collections={collections}
+          availableTags={tags}
           onClose={() => setIsUploadOpen(false)}
           onUploadSuccess={() => {
             fetchModels();
@@ -580,13 +612,14 @@ export default function App() {
         <ModelViewerModal
           modelId={selectedModelId}
           collections={collections}
+          availableTags={tags}
           currentUserId={currentUser?.id}
           isAdmin={currentUser?.role === 'admin'}
           onClose={() => setSelectedModelId(null)}
           onModelUpdated={() => {
-            // Model was updated/uploaded - refresh specific view data only
+            // Tag usage can change when metadata is edited, so refresh both.
             fetchModels();
-            // Tags and collections don't change when model is selected for viewing
+            fetchTags();
           }}
         />
       )}

@@ -1,11 +1,12 @@
 import React, { useEffect } from 'react';
 import { Heart, RefreshCw, Layers, Box, FileText } from 'lucide-react';
-import { ModelItem } from '../types';
+import { ModelItem, TagItem } from '../types';
 import { renderThumbnailInBrowser } from '../utils/clientThumbnailRenderer';
 import { isPdfFile } from '../utils/fileTypes';
 
 interface ModelCardProps {
   model: ModelItem;
+  availableTags?: TagItem[];
   onSelect: (id: string) => void;
   onToggleFavorite: (id: string, e: React.MouseEvent) => void;
   onRetryThumbnail: (id: string, e: React.MouseEvent) => void;
@@ -14,6 +15,7 @@ interface ModelCardProps {
 
 export const ModelCard: React.FC<ModelCardProps> = ({
   model,
+  availableTags = [],
   onSelect,
   onToggleFavorite,
   onRetryThumbnail,
@@ -118,14 +120,24 @@ export const ModelCard: React.FC<ModelCardProps> = ({
         {/* Tag chips */}
         {model.tags && model.tags.length > 0 && (
           <div className="flex flex-wrap gap-1 mt-auto">
-            {model.tags.slice(0, 3).map((tag) => (
-              <span
-                key={tag}
-                className="text-[10px] font-medium px-1.5 py-0.5 bg-[#23232c] text-neutral-400 border border-[#2e2e3a] rounded"
-              >
-                #{tag}
-              </span>
-            ))}
+            {model.tags.slice(0, 3).map((name) => {
+              const color =
+                availableTags.find(
+                  (tag) => tag.name.toLowerCase() === name.toLowerCase()
+                )?.color || '#60a5fa';
+              return (
+                <span
+                  key={name}
+                  className="flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 bg-[#23232c] text-neutral-400 border border-[#2e2e3a] rounded"
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full shrink-0"
+                    style={{ backgroundColor: color }}
+                  />
+                  #{name}
+                </span>
+              );
+            })}
             {model.tags.length > 3 && (
               <span className="text-[10px] text-neutral-500 self-center">
                 +{model.tags.length - 3}
