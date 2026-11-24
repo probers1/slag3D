@@ -1,182 +1,77 @@
-# SLAG3D Developer Guide
+# SLAG3D — Agent Notes
 
-## Quick Reference
+## Commands
 
-### Commands
-```bash
-npm run dev         # Dev server (auto-seeds admin)
-npm run build && npm start  # Production mode
-npm run set-admin -- 'NewPassword'  # Create/reset the admin account in the DB
-pkill -9 node       # Kill processes
-rm -f data/*.db*    # Reset database
-```
+- `npm run dev` — one process: Express + Vite middleware on `:3000`. Needs `.env`
+  (copy `.env.example`; `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, `SESSION_SECRET` ≥32 chars,
+  entropy-checked at startup). `GOOSE_SEED_DB=true` or `ADMIN_PASSWORD` seeds the first admin
+  (dev default: `admin` / `admin123`).
+- `npm run build` → Vite client + esbuild server (`dist/server.js`); `npm start` runs the bundle.
+  `NODE_ENV=production` is required for the bundle to serve `dist/` (otherwise Vite middleware).
+- `npm run typecheck` (`tsc --noEmit`, no output). There is **no** lint or format script.
+- Tests: `npm test` (password smoke), `npm run test:upload-security`, `npm run test:prod-paths`.
+  - `test:prod-paths` copies `dist/index.html` — run `npm run build:client` first.
+  - `tests/priority{1,2,3}_fixes.test.ts` have no npm script: `npx tsx tests/priority1_fixes.test.ts`.
+- Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm test`.
+- `npm run set-admin -- 'NewPassword'` creates/resets the admin in SQLite; works while the
+  server is running. `npm run update` runs `scripts/update.sh`.
 
-### Default Admin (Dev Only)
-- **Username**: `admin`
-- **Password**: `admin123`
-- ⚠️ Change immediately for production
+## Layout & wiring
 
-### Admin Credential Recovery
-- First-run seeding only happens when the `users` table is empty — an existing
-  database keeps its old admin password even if `.env` changes.
-- `npm run set-admin -- 'NewPassword'` (or `npm run set-admin` to use
-  `ADMIN_USER` / `ADMIN_PASSWORD` from `.env`) creates or resets the admin
-  account directly in SQLite. It works while the server is running (WAL).
-- `scripts/install-lxc.sh` runs this automatically when the printed credentials
-  fail to authenticate.
+- `server.ts` is the only entrypoint: `initDatabase()` → upload dirs → auth/CSRF → `/api/*` routers
+  → `/uploads` static → Vite (dev) or `dist/` (prod).
+- `server/` = Express backend/routes/migrations; `src/` = React; `lib/` = server-only thumbnail
+  engine (`thumbnail.ts`) + render queue (`queue.ts`, concurrency 2).
+- Relative imports in `server/` and `lib/` use explicit `.ts` extensions
+  (`allowImportingTsExtensions: true`). Avoid `@/`: configured inconsistently (tsconfig → repo
+  root, Vite → `src`) and unused.
+- All filesystem paths come from `server/paths.ts`. Never use `process.cwd()`/`__dirname` for
+  uploads — the bundled server would write to one place and serve from another, producing 404s or
+  `Invalid typed array length` in the viewer. `UPLOADS_DIR` overrides the default; Docker `/uploads`,
+  LXC `/opt/slag3D/uploads`. `npm run test:prod-paths` guards this regression.
+- `server/lib/uploadSecurity.ts` is the single source for allowed extensions, MIME types, and
+  archive filtering. Keep `modelExtensionOf()` 3D-only; PDFs use `documentExtensionOf()` /
+  `uploadableExtensionOf()`. Active content (html/js/svg) stays blocked in archives.
+  Caps: 300MB/file (`server/upload.ts`), 20 files/request (`server/routes/models.ts`).
 
----
+## Database & migrations
 
-## Database
+- Dev `./data/vault.db`, prod `/data/vault.db`; `DB_PATH` overrides. Current schema version **5**.
+- A migration is `server/migrations/NNN_*.ts` returning `{version, timestamp}`. Register it in the
+  array in `server/migrations/index.ts` **and** mirror new columns in `applyFallbackTables()` in
+  `server/db.ts`. v3 was abandoned; v4 = user soft-delete; v5 = `models.item_type`.
+- The runner skips migrations where `schemaVersion >= migrationVersion`. Real DBs may report a
+  higher version from another build (e.g. one with `page_count`), so `models.item_type` is also
+  added by idempotent `ensureItemTypeColumn()` called unconditionally from `initDatabase()` —
+  do not remove it or rely on the version check alone. Follow this repair pattern for any new
+  column code queries immediately.
+- Admin seeding only runs when `users` is empty; an existing DB keeps its old password even if
+  `.env` changes. Reset with `npm run set-admin`, not by deleting `data/`.
 
-### Locations
-| Environment | Path |
-|-------------|------|
-| Development | `./data/vault.db` |
-| Production | `/data/vault.db` |
+## Auth & API
 
-### Schema Version: 5
+- Two layers: session cookie (`connect.sid`) + JWT bearer (access 1h, refresh 7d).
+- Unsafe `/api` methods need an `x-csrf-token` header matching the cookie; the frontend's
+  `apiFetch()` (`src/utils/api.ts`) adds Bearer + CSRF. Media anchors can append `?token=`.
+- `GET /api/models` searches title, description **and attachment filenames**. `item_type` is
+  `model | document`; collections/favorites are unchanged by PDFs.
 
-```sql
-users, models (item_type: model | document), files, tags, model_tags, 
-favorites, collections, collection_models, auth_tokens
-```
+## PDF documents
 
-### Migrations
-- Auto-run on startup if pending migrations exist
-- Track versions in `schema_versions` table
-- See [MIGRATION_GUIDE.md](./MIGRATION_GUIDE.md) for details
+- `.pdf` uploads directly, inside `.zip`/`.7z`, or via "Add Files". PDF-only upload →
+  `item_type='document'`; PDFs added to a model stay attachments and never become primary 3D.
+- Page-1 thumbnails render with pdf.js inside Puppeteer (`lib/thumbnail.ts`) into the normal
+  512×512 PNG. Client reader `src/components/PdfViewer.tsx` is lazy-loaded and fetches bytes via
+  `apiFetch` so `Content-Disposition: attachment` is irrelevant.
 
----
+## Operational gotchas
 
-## File System Structure
-
-```
-slag3D/
-├── server/          # Express backend (use tsx, not tsc)
-│   ├── routes/      # API endpoints
-│   ├── migrations/  # Database schema changes
-│   ├── paths.ts     # Single source of truth for storage paths
-│   └── middleware.ts# Auth helpers
-├── src/             # React frontend only
-├── lib/             # Thumbnail engine (Puppeteer + Three.js)
-├── uploads/         # Static files (/uploads route)
-│   ├── models/     # Uploaded 3D files per model ID
-│   ├── thumbnails/ # Generated previews
-│   └── tmp/        # Multer temp uploads
-└── vite.config.ts   # Vite SPA middleware
-```
-
-### Storage Paths
-- **Never** resolve upload paths with `process.cwd()` or `__dirname` directly —
-  in production the bundle lives in `dist/`, which made the server write to
-  `<cwd>/uploads` but serve from `<bundle>/uploads` (the SPA fallback then
-  answered with `index.html`, breaking the 3D viewer with
-  `Invalid typed array length`).
-- Use `server/paths.ts`: `UPLOADS_DIR`, `THUMBNAILS_DIR`, `MODELS_DIR`,
-  `TMP_UPLOADS_DIR`, `resolveUploadsPath()`, `ensureUploadsDirs()`.
-- `UPLOADS_DIR` env var overrides the default (`<project root>/uploads`);
-  Docker uses `/uploads`, the LXC installer `/opt/slag3D/uploads`.
-- `npm run test:prod-paths` boots the bundled production server and verifies
-  that uploads and thumbnails are written to and served from the same place.
-
----
-
-## Environment Variables
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `JWT_SECRET` | (required) | JWT signing — **min 32 chars** |
-| `REFRESH_TOKEN_SECRET` | (required) | Refresh token signing — **min 32 chars** |
-| `SESSION_SECRET` | (required) | Session cookie signing — **min 32 chars** |
-| `DB_PATH` | auto | SQLite database path (overrides `/data` / `./data`) |
-| `UPLOADS_DIR` | `<project root>/uploads` | Uploaded models + rendered thumbnails |
-| `GOOSE_SEED_DB` | false | Seed first admin (dev / initial deploy) |
-| `ADMIN_USER` | `admin` | Username created by first-run seeding |
-| `ADMIN_PASSWORD` | `admin123` | Password created by first-run seeding; setting it also enables seeding |
-| `SESSION_EXPIRY_MINUTES` | 1440 | Cookie max age (24 hours default) |
-
----
-
-## Thumbnail Engine
-
-### Flow
-1. Upload → `/uploads/tmp/` (Multer)
-2. Extract → `/uploads/models/<id>/` (upload.ts)
-3. Queue job → `lib/queue.ts` (p-queue, concurrency=2)
-4. Render → Puppeteer + Three.js → 512×512 PNG
-
-### PDF Documents
-- `.pdf` may be uploaded directly, inside `.zip`/`.7z`, or via "Add Files"; archives keep PDF entries alongside 3D files.
-- PDF-only uploads become `models.item_type = 'document'` items; PDFs added to a model stay attachments and never become `is_primary_3d`.
-- Thumbnails render page 1 with pdf.js inside Puppeteer (`lib/thumbnail.ts`).
-- In-app reading uses `src/components/PdfViewer.tsx` (pdfjs-dist); files are fetched with the authenticated `apiFetch` helper so `Content-Disposition: attachment` on `/uploads/models/*` is irrelevant.
-
-### Puppeteer Flags
-```bash
---no-sandbox --disable-setuid-sandbox --use-gl=angle \
---single-process --disable-dev-shm-usage
-```
-
----
-
-## Authentication Flow
-
-**Layer 1**: Session cookies (`connect.sid`) — SQLite-backed  
-**Layer 2**: JWT Bearer tokens (access: 1h, refresh: 7d)  
-
-### Endpoints
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/auth/login` | Returns access + refresh tokens |
-| POST | `/api/auth/refresh` | Rotates token pair |
-| POST | `/api/auth/logout` | Invalidates all sessions |
-
-See [SECURITY_GUIDE.md](./SECURITY_GUIDE.md) for security implementation details.
-
----
-
-## API Endpoints Quick Reference
-
-**Models**: `GET /api/models?page=?&search=...&tag=...`  
-**Upload**: `POST /api/models` — Accepts .stl, .3mf, .obj, .pdf, .zip, .7z (max 300MB)  
-**Collections**: Nested folder system with model assignments  
-**Tags**: Cloud tagging system
-
----
-
-## Deployment
-
-### Proxmox LXC (Recommended)
-```bash
-curl -fsSL https://raw.githubusercontent.com/slag3d/slag3d/main/scripts/install-lxc.sh | bash
-systemctl status slag3d.service
-```
-
-### Docker Compose
-```bash
-docker compose up -d  # Volumes: slag3d_data, slag3d_uploads
-```
-
----
-
-## Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| Port 3000 in use | `pkill -9 node` |
-| Admin login fails | Reset: `rm data/*.db* && npm run dev` |
-| Thumbnail rendering slow/hanging | Check queue: `node lib/queue.js` or restart server |
-| Large WAL journal | Restart triggers auto-checkpoint, or use API checkpoint endpoint |
-
----
-
-## Notes for Working with OpenCode
-
-- **Routes**: Edit `server/routes/*.ts` → restart server (no build needed)
-- **Frontend**: Auto-HMR enabled (disable via `DISABLE_HMR=true`)
-- **Typescript**: Use `@/*` path aliases pointing to `src/`
-- **Three.js bundling**: Check `lib/three-bundle.js` if extending rendering
-
----
-**Last Updated**: Nov 2026 — Version 4 (soft delete active)
+- Edit `server/routes/*.ts` → restart the server; edit `src/` → HMR. `DISABLE_HMR=true` disables
+  HMR **and** file watching.
+- Thumbnail failures are logged by the queue, not returned in the upload response; stuck renders
+  usually clear on restart.
+- `pkill -9 node` kills every Node process on the machine — use a targeted kill if other projects
+  run here.
+- Deployment details: `scripts/install-lxc.sh` (verifies admin credentials) or `docker compose up -d`
+  (volumes `slag3d_data`, `slag3d_uploads`). More detail in `README.md`, `MIGRATION_GUIDE.md`,
+  and `SECURITY_GUIDE.md`.
