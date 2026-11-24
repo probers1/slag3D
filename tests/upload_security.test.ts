@@ -3,9 +3,12 @@ import os from 'os';
 import path from 'path';
 import zlib from 'node:zlib';
 import {
+  documentExtensionOf,
   extractZipArchive,
+  mimeTypeForExtension,
   modelExtensionOf,
   safeStoredFilename,
+  uploadableExtensionOf,
 } from '../server/lib/uploadSecurity.ts';
 
 function assert(condition: boolean, message: string) {
@@ -105,6 +108,14 @@ for (const good of ['cube.stl', 'cube.STL', 'part.3mf', 'part.obj']) {
   assert(modelExtensionOf(good) !== null, `"${good}" must be allowed into the uploads directory`);
 }
 
+// PDFs are allowed, but must never be treated as primary 3D meshes.
+for (const pdf of ['manual.pdf', 'MANUAL.PDF']) {
+  assert(documentExtensionOf(pdf) !== null, `"${pdf}" must be allowed as a document`);
+  assert(modelExtensionOf(pdf) === null, `"${pdf}" must not be treated as a 3D model`);
+  assert(uploadableExtensionOf(pdf) !== null, `"${pdf}" must be storable`);
+}
+assert(mimeTypeForExtension('.pdf') === 'application/pdf', 'PDF files must be labelled application/pdf');
+
 // ---------------------------------------------------------------------------
 // 2. The client controlled filename must never escape the uploads directory.
 // ---------------------------------------------------------------------------
@@ -173,6 +184,31 @@ try {
   const htmlOnly = await extractZipArchive(htmlOnlyZip, 'model-id-2', modelDir);
   assert(htmlOnly.length === 0, 'An archive without model files must yield no extracted files');
   assert(fs.readdirSync(modelDir).length === 1, 'No additional file may be written for an archive without models');
+
+  // -------------------------------------------------------------------------
+  // 5. Archives may contain PDFs alongside models, but active content is still
+  //    rejected and PDFs are recorded as documents (never as primary meshes).
+  // -------------------------------------------------------------------------
+  const docDir = path.join(tmpRoot, 'documents');
+  fs.mkdirSync(docDir, { recursive: true });
+  const mixedZip = path.join(tmpRoot, 'mixed.zip');
+  fs.writeFileSync(
+    mixedZip,
+    buildZip([
+      { name: 'manual.pdf', content: '%PDF-1.4 test document' },
+      { name: 'evil.html', content: '<script>alert(1)</script>' },
+      { name: 'part.obj', content: 'v 0 0 0' },
+    ])
+  );
+
+  const mixed = await extractZipArchive(mixedZip, 'doc-id', docDir);
+  assert(mixed.length === 2, `A mixed archive must keep only the PDF and 3D entry (got ${mixed.length})`);
+  assert(mixed.some((f) => f.original_name === 'manual.pdf'), 'The PDF entry must be extracted');
+  assert(mixed.some((f) => f.original_name === 'part.obj'), 'The 3D entry must still be extracted');
+  assert(mixed.every((f) => f.is_primary_3d === 0), 'Archive entries must not be marked primary during extraction');
+  const pdfEntry = mixed.find((f) => f.original_name === 'manual.pdf')!;
+  assert(pdfEntry.mime_type === 'application/pdf', 'PDF entries must carry application/pdf');
+  assert(!fs.readdirSync(docDir).some((f) => f.endsWith('.html')), 'Active content must still be skipped');
 } finally {
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 }

@@ -20,6 +20,7 @@ export interface ModelItem {
   user_id: string;
   title: string;
   description: string;
+  item_type: 'model' | 'document';
   thumbnail_path: string | null;
   thumbnail_status: 'pending' | 'processing' | 'completed' | 'failed';
   created_at: string;

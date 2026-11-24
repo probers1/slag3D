@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { X, Upload, FileCode, CheckCircle, AlertCircle } from 'lucide-react';
+import { X, Upload, FileCode, FileText, CheckCircle, AlertCircle } from 'lucide-react';
 import { ErrorBoundary } from './ErrorBoundary';
 import { CollectionItem } from '../types';
 import { apiFetch } from '../utils/api';
@@ -41,7 +41,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         setUploadError({ 
           message: `${file.name}: Image files are not allowed`, 
           type: 'file' as const,
-          details: 'We only accept 3D model files (.stl, .3mf, .obj) or archives (.zip, .7z)'
+          details: 'We only accept 3D models (.stl, .3mf, .obj), PDFs (.pdf) or archives (.zip, .7z)'
         });
         return;
       }
@@ -66,11 +66,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       const ext = file.name.split('.').pop()?.toLowerCase() || '';
       
       // Reject files without extension or with disallowed extensions
-      if (!ext || !['stl', '3mf', 'obj', 'zip', '7z'].includes(ext)) {
-        setUploadError({ 
-          message: `File: ${file.name.split('.')[0] || file.name}`, 
+      if (!ext || !['stl', '3mf', 'obj', 'pdf', 'zip', '7z'].includes(ext)) {
+        setUploadError({
+          message: `File: ${file.name.split('.')[0] || file.name}`,
           type: 'file' as const,
-          details: 'Please use only .stl, .3mf, .obj (3D models) or .zip, .7z (archives)'
+          details: 'Please use only .stl, .3mf, .obj (3D models), .pdf (documents) or .zip, .7z (archives)'
         });
         return;
       }
@@ -92,7 +92,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
     if (selectedFiles.length === 0) {
       setUploadError({ 
-        message: 'Please select at least one 3D file or archive', 
+        message: 'Please select at least one 3D file, PDF, or archive',
         type: 'file' as const 
       });
       return;
@@ -137,7 +137,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           // Image file attempt
           if (msgLower.includes('image') || msgLower.includes('.jpg') || msgLower.includes('.png')) {
             errorType = 'file' as const;
-            message += '. Only 3D models (.stl/.3mf/.obj) and archives allowed.';
+            message += '. Only 3D models (.stl/.3mf/.obj), PDFs (.pdf) and archives allowed.';
           } else if (msgLower.includes('no extension') || msgLower.includes('extension ')) {
             errorType = 'file' as const;
           } else if (msgLower.includes('zip')) {
@@ -179,7 +179,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
       
       if (lowerMsg.includes('image')) {
         errorType = 'file' as const;
-        errorMessage += ' (Only .stl/.3mf/.obj and archives allowed)';
+        errorMessage += ' (Only .stl/.3mf/.obj, .pdf and archives allowed)';
       } else if (lowerMsg.includes('no extension') || lowerMsg.includes('extension')) {
         errorType = 'file' as const;
       }
@@ -202,7 +202,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#262632]">
           <div className="flex items-center gap-2">
             <Upload className="w-5 h-5 text-blue-400" />
-            <h2 className="text-base font-bold text-white">Upload 3D Asset or Archive</h2>
+            <h2 className="text-base font-bold text-white">Upload Asset or Document</h2>
           </div>
           <button
             onClick={onClose}
@@ -228,8 +228,9 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     <p className="font-medium mb-1 text-red-300">Supported formats:</p>
                     <ul className="list-disc list-inside text-red-300/70 space-y-0.5">
                       <li>.stl, .3mf, .obj (3D model files)</li>
-                      <li>.zip, .7z archives containing valid 3D models</li>
-                      <li>Image files (.jpg, .png) are not allowed for 3D models</li>
+                      <li>.pdf (documents and manuals)</li>
+                      <li>.zip, .7z archives containing 3D models or PDFs</li>
+                      <li>Image files (.jpg, .png) are not allowed</li>
                     </ul>
                   </div>
                 )}
@@ -251,7 +252,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               type="file"
               ref={fileInputRef}
               multiple
-              accept=".stl,.3mf,.obj,.zip,.7z,image/*"
+              accept=".stl,.3mf,.obj,.pdf,.zip,.7z"
               onChange={(e) => handleFilesAdded(e.target.files)}
               className="hidden"
             />
@@ -262,7 +263,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               Drag & drop files here, or <span className="text-blue-400 underline">browse</span>
             </p>
             <p className="text-xs text-neutral-500 mt-1">
-              Supports .STL, .3MF, .OBJ, and multi-file archives (.ZIP, .7Z) up to 300MB
+              Supports .STL, .3MF, .OBJ, .PDF and archives (.ZIP, .7Z) up to 300MB
             </p>
           </div>
 
@@ -275,7 +276,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                   className="flex items-center justify-between p-2 bg-[#202028] border border-[#2c2c38] rounded-lg text-xs"
                 >
                   <div className="flex items-center gap-2 truncate">
-                    <FileCode className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                    {f.name.toLowerCase().endsWith('.pdf') ? (
+                      <FileText className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                    ) : (
+                      <FileCode className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                    )}
                     <span className="truncate text-neutral-200">{f.name}</span>
                     <span className="text-neutral-500 font-mono text-[10px]">
                       ({(f.size / 1024 / 1024).toFixed(2)} MB)
@@ -296,7 +301,7 @@ export const UploadModal: React.FC<UploadModalProps> = ({
           {/* Metadata Fields */}
           <div className="flex flex-col gap-3">
             <div>
-              <label className="block text-xs font-semibold text-neutral-300 mb-1">Model Title</label>
+              <label className="block text-xs font-semibold text-neutral-300 mb-1">Title</label>
               <input
                 type="text"
                 placeholder="e.g. Voron Stealthburner Toolhead"

@@ -100,10 +100,14 @@ router.get('/', (req, res) => {
     params.push(tag);
   }
 
-  // Text search in title or description
+  // Text search in title, description or any attached file name (including PDFs)
   if (search) {
-    whereClauses.push('(m.title LIKE ? OR m.description LIKE ?)');
-    params.push(`%${search}%`, `%${search}%`);
+    whereClauses.push(`(
+      m.title LIKE ? OR m.description LIKE ? OR EXISTS (
+        SELECT 1 FROM files f WHERE f.model_id = m.id AND f.original_name LIKE ?
+      )
+    )`);
+    params.push(`%${search}%`, `%${search}%`, `%${search}%`);
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
@@ -126,7 +130,8 @@ router.get('/', (req, res) => {
       m.id, 
       m.user_id, 
       m.title, 
-      m.description, 
+      m.description,
+      m.item_type,
       m.thumbnail_path, 
       m.thumbnail_status, 
       m.created_at, 
@@ -153,10 +158,12 @@ router.get('/', (req, res) => {
     ORDER BY t.name ASC
   `);
 
+  // Primary 3D file for models; largest file (usually the document) for PDF-only items.
   const primaryFileStmt = db.prepare(`
-    SELECT id, filename, original_name, mime_type, file_size, file_path, is_primary_3d 
-    FROM files 
-    WHERE model_id = ? AND is_primary_3d = 1
+    SELECT id, filename, original_name, mime_type, file_size, file_path, is_primary_3d
+    FROM files
+    WHERE model_id = ?
+    ORDER BY is_primary_3d DESC, file_size DESC
     LIMIT 1
   `);
 
@@ -182,7 +189,7 @@ router.get('/', (req, res) => {
   });
 });
 
-// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .zip, .7z) with rate limiting
+// POST /api/models — Multi-file upload (.stl, .3mf, .obj, .pdf, .zip, .7z) with rate limiting
 router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req, res) => {
   // Make sure userId exists even if session doesn't match request object
   const userId = req.session.userId || (req as any).userId;
@@ -197,7 +204,7 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
 
     const files = (req.files as Express.Multer.File[]) || [];
     if (!files || files.length === 0) {
-      return res.status(400).json({ error: 'At least one 3D file or archive (.stl, .3mf, .obj, .zip, .7z) is required' });
+      return res.status(400).json({ error: 'At least one file (.stl, .3mf, .obj, .pdf, .zip, .7z) is required' });
     }
 
     const modelTitle = title && String(title).trim() ? String(title).trim() : path.parse(files[0].originalname).name;
@@ -211,6 +218,10 @@ router.post('/', uploadLimiter, uploadMiddleware.array('files', 20), async (req,
 
     // Extract and process files
     const processedFiles = await processModelFiles(modelId, files);
+
+    // An upload with no 3D payload is a standalone document (PDF) item.
+    const has3dFile = processedFiles.some((f) => ['.stl', '.3mf', '.obj'].includes(path.extname(f.original_name).toLowerCase()));
+    db.prepare(`UPDATE models SET item_type = ? WHERE id = ?`).run(has3dFile ? 'model' : 'document', modelId);
 
     // Sync tags
     if (tags) {
@@ -361,8 +372,14 @@ router.put('/:id', (req, res) => {
     syncModelTags(id, tags);
   }
 
-  // Override primary 3D file if requested
+  // Override primary 3D file if requested (PDFs are documents, never primary meshes)
   if (primary_file_id) {
+    const candidate = db.prepare(`
+      SELECT original_name FROM files WHERE id = ? AND model_id = ?
+    `).get(primary_file_id, id) as { original_name: string } | undefined;
+    if (!candidate || path.extname(candidate.original_name).toLowerCase() === '.pdf') {
+      return res.status(400).json({ error: 'Only a 3D model file can be set as primary' });
+    }
     db.prepare('UPDATE files SET is_primary_3d = 0 WHERE model_id = ?').run(id);
     db.prepare('UPDATE files SET is_primary_3d = 1 WHERE model_id = ? AND id = ?').run(id, primary_file_id);
   }
@@ -456,22 +473,22 @@ router.post('/:id/regenerate-thumbnail', (req, res) => {
     return res.status(403).json({ error: 'Permission denied' });
   }
 
-  // Find primary 3D file
+  // Find primary 3D file, or the largest PDF for document-only items.
   const primary = db.prepare(`
-    SELECT * FROM files WHERE model_id = ? AND is_primary_3d = 1
+    SELECT * FROM files WHERE model_id = ? ORDER BY is_primary_3d DESC, file_size DESC LIMIT 1
   `).get(id) as { file_path: string; original_name: string } | undefined;
 
   if (!primary) {
-    return res.status(400).json({ error: 'No 3D file found for thumbnail generation' });
+    return res.status(400).json({ error: 'No file found for thumbnail generation' });
   }
 
-  const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
+  const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '');
   const relativeOrAbs = resolveUploadsPath(primary.file_path);
 
   enqueueThumbnailRender({
     modelId: id,
     filePath: relativeOrAbs,
-    fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+    fileType: primaryExt === 'pdf' ? 'pdf' : (['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt as 'stl' | 'obj' | '3mf' : 'stl'),
   });
 
   res.json({ message: 'Thumbnail regeneration queued', thumbnail_status: 'pending' });

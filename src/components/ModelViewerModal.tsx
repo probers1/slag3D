@@ -5,6 +5,7 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  Suspense,
 } from 'react';
 import * as THREE from 'three';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -28,15 +29,21 @@ import {
   Eye,
   Star,
   Upload,
+  FileText,
 } from 'lucide-react';
 import { ModelFile, CollectionItem } from '../types';
 import { apiFetch, getStoredToken } from '../utils/api';
+import { isPdfFile } from '../utils/fileTypes';
+
+// pdf.js is large; only load it when a document is actually opened.
+const PdfViewer = React.lazy(() => import('./PdfViewer').then((m) => ({ default: m.PdfViewer })));
 
 interface ModelDetail {
   id: string;
   user_id: string;
   title: string;
   description: string;
+  item_type: 'model' | 'document';
   thumbnail_path: string | null;
   thumbnail_status: 'pending' | 'processing' | 'completed' | 'failed';
   created_at: string;
@@ -71,6 +78,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   // Model data state
   const [model, setModel] = useState<ModelDetail | null>(null);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [viewerTab, setViewerTab] = useState<'3d' | 'pdf'>('3d');
   const [loading, setLoading] = useState(true);
   const [loadingMesh, setLoadingMesh] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +154,43 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   useEffect(() => {
     fetchModel();
   }, [modelId]);
+
+  // Document-only items open directly in the PDF tab.
+  useEffect(() => {
+    if (!model) return;
+    const has3d = model.files.some((f) => !isPdfFile(f));
+    if (model.item_type === 'document' || !has3d) {
+      setViewerTab('pdf');
+      const firstPdf = model.files.find(isPdfFile);
+      if (firstPdf) setSelectedFileId(firstPdf.id);
+    } else if (!model.files.some(isPdfFile)) {
+      setViewerTab('3d');
+    }
+  }, [model?.id, model?.item_type]);
+
+  const switchTab = (tab: '3d' | 'pdf') => {
+    if (!model) return;
+    setViewerTab(tab);
+    if (tab === 'pdf') {
+      const current = model.files.find((f) => f.id === selectedFileId);
+      if (!current || !isPdfFile(current)) {
+        const firstPdf = model.files.find(isPdfFile);
+        if (firstPdf) setSelectedFileId(firstPdf.id);
+      }
+    } else {
+      const current = model.files.find((f) => f.id === selectedFileId);
+      if (!current || isPdfFile(current)) {
+        const first3d = model.files.find((f) => !isPdfFile(f));
+        if (first3d) setSelectedFileId(first3d.id);
+      }
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
+    }
+  };
+
+  const handleSelectFile = (file: ModelFile) => {
+    setSelectedFileId(file.id);
+    setViewerTab(isPdfFile(file) ? 'pdf' : '3d');
+  };
 
   // Initialize Three.js scene once on mount
   useEffect(() => {
@@ -400,12 +445,12 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 
   // When model or selectedFileId changes, load that file into the Three.js scene
   useEffect(() => {
-    if (!model || !model.files || model.files.length === 0) return;
-    const activeFile = model.files.find((f) => f.id === selectedFileId) || model.files[0];
-    if (activeFile) {
+    if (!model || !model.files || model.files.length === 0 || viewerTab === 'pdf') return;
+    const activeFile = model.files.find((f) => f.id === selectedFileId) || model.files.find((f) => !isPdfFile(f));
+    if (activeFile && !isPdfFile(activeFile)) {
       loadActiveMesh(activeFile);
     }
-  }, [model, selectedFileId, loadActiveMesh]);
+  }, [model, selectedFileId, loadActiveMesh, viewerTab]);
 
   // Toggle wireframe mode dynamically
   const toggleWireframe = () => {
@@ -579,7 +624,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   // Delete model
   const handleDeleteModel = async () => {
     if (!model) return;
-    if (!confirm(`Permanently delete "${model.title}" and all its 3D files from disk?`)) return;
+    if (!confirm(`Permanently delete "${model.title}" and all its files from disk?`)) return;
 
     try {
       const res = await apiFetch(`/api/models/${model.id}`, { method: 'DELETE' });
@@ -593,7 +638,11 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
   };
 
   const isOwnerOrAdmin = model && (model.user_id === currentUserId || isAdmin);
+  const pdfFiles = model?.files.filter(isPdfFile) || [];
+  const has3dFiles = Boolean(model?.files.some((f) => !isPdfFile(f)));
+  const isDocumentItem = model?.item_type === 'document';
   const currentActiveFile = model?.files.find((f) => f.id === selectedFileId) || model?.files[0];
+  const currentPdfFile = pdfFiles.find((f) => f.id === selectedFileId) || pdfFiles[0];
 
   return (
     <ErrorBoundary>
@@ -602,8 +651,10 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
           {/* Modal Top Header */}
           <div className="flex items-center justify-between px-6 py-3.5 border-b border-[#252530] bg-[#1a1a22]">
             <div className="flex items-center gap-3 truncate">
-              <div className="w-8 h-8 rounded-lg bg-blue-600/20 text-blue-400 flex items-center justify-center shrink-0">
-                <Box className="w-4 h-4" />
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                isDocumentItem ? 'bg-red-600/20 text-red-400' : 'bg-blue-600/20 text-blue-400'
+              }`}>
+                {isDocumentItem ? <FileText className="w-4 h-4" /> : <Box className="w-4 h-4" />}
               </div>
               <div className="truncate">
                 <h2 className="text-base font-bold text-white truncate font-['Plus_Jakarta_Sans',sans-serif]">
@@ -653,83 +704,150 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
 
           {/* Modal Body */}
           <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto">
-            {/* Left Column: 3D Viewport Stage */}
+            {/* Left Column: 3D viewport / PDF document */}
             <div className="lg:col-span-7 bg-[#121214] flex flex-col relative border-b lg:border-b-0 lg:border-r border-[#252530] min-h-[400px] lg:min-h-[560px]">
-              <div ref={mountRef} className="w-full h-full flex-1 cursor-grab active:cursor-grabbing" />
+              {/* Viewer mode tabs */}
+              {(has3dFiles || pdfFiles.length > 0) && (
+                <div className="flex items-center gap-1 px-4 pt-3 shrink-0 bg-[#141418]">
+                  {has3dFiles && (
+                    <button
+                      onClick={() => switchTab('3d')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs font-semibold transition-colors ${
+                        viewerTab === '3d'
+                          ? 'bg-[#121214] text-blue-400 border border-b-0 border-[#252530]'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <Box className="w-3.5 h-3.5" /> 3D Model
+                    </button>
+                  )}
+                  {pdfFiles.length > 0 && (
+                    <button
+                      onClick={() => switchTab('pdf')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-t-lg text-xs font-semibold transition-colors ${
+                        viewerTab === 'pdf'
+                          ? 'bg-[#121214] text-red-400 border border-b-0 border-[#252530]'
+                          : 'text-neutral-400 hover:text-white'
+                      }`}
+                    >
+                      <FileText className="w-3.5 h-3.5" /> Documents ({pdfFiles.length})
+                    </button>
+                  )}
+                </div>
+              )}
 
-              {/* Active File Switcher Overlay */}
-              {model && model.files.length > 1 && (
-                <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs shadow-xl">
-                  <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1.5 shrink-0">
-                    <Box className="w-3.5 h-3.5 text-blue-400" />
-                    Viewing:
-                  </span>
-                  <select
-                    value={currentActiveFile?.id || ''}
-                    onChange={(e) => setSelectedFileId(e.target.value)}
-                    className="bg-[#121216] border border-[#35354a] rounded-lg px-2.5 py-1 text-white text-xs outline-none focus:border-blue-500 font-medium max-w-[210px] truncate"
+              {/* 3D stage stays mounted so the WebGL context survives tab switches */}
+              <div className={`${viewerTab === 'pdf' ? 'hidden' : 'flex'} relative flex-1 min-h-0 flex-col`}>
+                <div ref={mountRef} className="w-full h-full flex-1 cursor-grab active:cursor-grabbing" />
+
+                {/* Active 3D File Switcher Overlay */}
+                {model && model.files.filter((f) => !isPdfFile(f)).length > 1 && (
+                  <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs shadow-xl">
+                    <span className="text-[11px] font-semibold text-neutral-400 flex items-center gap-1.5 shrink-0">
+                      <Box className="w-3.5 h-3.5 text-blue-400" />
+                      Viewing:
+                    </span>
+                    <select
+                      value={currentActiveFile?.id || ''}
+                      onChange={(e) => {
+                        const file = model.files.find((f) => f.id === e.target.value);
+                        if (file) handleSelectFile(file);
+                      }}
+                      className="bg-[#121216] border border-[#35354a] rounded-lg px-2.5 py-1 text-white text-xs outline-none focus:border-blue-500 font-medium max-w-[210px] truncate"
+                    >
+                      {model.files.filter((f) => !isPdfFile(f)).map((file, idx) => (
+                        <option key={file.id} value={file.id}>
+                          {idx + 1}. {file.original_name} {file.is_primary_3d === 1 ? '★ [Primary]' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                {loadingMesh && (
+                  <div className="absolute top-4 right-4 z-20 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs text-blue-400 flex items-center gap-2 shadow-lg">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Loading 3D asset...</span>
+                  </div>
+                )}
+
+                {/* Viewport Controls */}
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-[#1b1b24]/90 backdrop-blur-md border border-[#2e2e3d] rounded-xl shadow-xl text-xs z-10">
+                  <button
+                    onClick={toggleWireframe}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
+                      wireframe ? 'bg-blue-600 text-white' : 'text-neutral-300 hover:bg-[#282834]'
+                    }`}
                   >
-                    {model.files.map((file, idx) => (
-                      <option key={file.id} value={file.id}>
-                        {idx + 1}. {file.original_name} {file.is_primary_3d === 1 ? '★ [Primary]' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-neutral-500 font-mono shrink-0">
-                    {(model.files.findIndex((f) => f.id === currentActiveFile?.id) + 1)}/{model.files.length}
-                  </span>
+                    {wireframe ? 'Wireframe: ON' : 'Solid Mesh'}
+                  </button>
+
+                  <button
+                    onClick={resetCamera}
+                    className="px-3 py-1.5 text-neutral-300 hover:bg-[#282834] rounded-lg font-medium transition-colors"
+                  >
+                    Reset Camera
+                  </button>
+
+                  <div className="h-4 w-px bg-[#303040]" />
+
+                  <button
+                    onClick={handleSaveThumbnail}
+                    disabled={isCapturingThumb}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-sm transition-all"
+                    title="Capture this camera angle as the model's 512x512 thumbnail"
+                  >
+                    <Camera className="w-3.5 h-3.5" />
+                    <span>{isCapturingThumb ? 'Saving Angle...' : 'Save as Thumbnail'}</span>
+                  </button>
                 </div>
-              )}
 
-              {loadingMesh && (
-                <div className="absolute top-4 right-4 z-20 px-3 py-1.5 bg-[#181822]/90 backdrop-blur-md border border-[#2e2e40] rounded-xl text-xs text-blue-400 flex items-center gap-2 shadow-lg">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                  <span>Loading 3D asset...</span>
-                </div>
-              )}
-
-              {/* Viewport Controls */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-[#1b1b24]/90 backdrop-blur-md border border-[#2e2e3d] rounded-xl shadow-xl text-xs z-10">
-                <button
-                  onClick={toggleWireframe}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition-colors ${
-                    wireframe ? 'bg-blue-600 text-white' : 'text-neutral-300 hover:bg-[#282834]'
-                  }`}
-                >
-                  {wireframe ? 'Wireframe: ON' : 'Solid Mesh'}
-                </button>
-
-                <button
-                  onClick={resetCamera}
-                  className="px-3 py-1.5 text-neutral-300 hover:bg-[#282834] rounded-lg font-medium transition-colors"
-                >
-                  Reset Camera
-                </button>
-
-                <div className="h-4 w-px bg-[#303040]" />
-
-                <button
-                  onClick={handleSaveThumbnail}
-                  disabled={isCapturingThumb}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg shadow-sm transition-all"
-                  title="Capture this camera angle as the model's 512x512 thumbnail"
-                >
-                  <Camera className="w-3.5 h-3.5" />
-                  <span>{isCapturingThumb ? 'Saving Angle...' : 'Save as Thumbnail'}</span>
-                </button>
+                {saveToast && (
+                  <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-950/90 border border-emerald-700/60 text-emerald-200 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 z-30">
+                    <Check className="w-4 h-4 text-emerald-400" />
+                    <span>{saveToast}</span>
+                  </div>
+                )}
               </div>
 
-              {saveToast && (
-                <div className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-2 bg-emerald-950/90 border border-emerald-700/60 text-emerald-200 rounded-xl text-xs font-semibold shadow-xl flex items-center gap-2 z-30">
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span>{saveToast}</span>
+              {/* PDF document tab */}
+              {viewerTab === 'pdf' && currentPdfFile && (
+                <div className="relative flex-1 min-h-0">
+                  <Suspense fallback={
+                    <div className="h-full w-full flex items-center justify-center text-xs text-neutral-400">
+                      <RefreshCw className="w-5 h-5 mr-2 animate-spin text-blue-400" />
+                      Loading PDF viewer...
+                    </div>
+                  }>
+                    <PdfViewer file={currentPdfFile} />
+                  </Suspense>
+                  {pdfFiles.length > 1 && (
+                    <div className="absolute top-3 right-4 z-20 flex items-center gap-2 px-3 py-1.5 bg-[#181822]/95 backdrop-blur-md border border-[#3a3a4a] rounded-xl text-xs shadow-xl">
+                      <FileText className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                      <select
+                        value={currentPdfFile.id}
+                        onChange={(e) => {
+                          const file = pdfFiles.find((f) => f.id === e.target.value);
+                          if (file) setSelectedFileId(file.id);
+                        }}
+                        className="bg-[#121216] border border-[#35354a] rounded-lg px-2 py-1 text-white text-xs outline-none focus:border-blue-500 max-w-[220px] truncate"
+                      >
+                        {pdfFiles.map((file, idx) => (
+                          <option key={file.id} value={file.id}>
+                            {idx + 1}. {file.original_name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
 
             {/* Right Column: Analytics & Management */}
             <div className="lg:col-span-5 p-6 flex flex-col gap-6 overflow-y-auto bg-[#18181f]">
-              {/* Slicing Analytics */}
+              {/* Slicing Analytics (3D tab only) */}
+              {viewerTab === '3d' ? (
               <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-white flex items-center gap-2">
@@ -799,24 +917,44 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                   </div>
                 </div>
               </div>
+              ) : (
+              <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
+                <h3 className="text-xs font-bold text-white flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-red-400" />
+                  Document Viewer
+                </h3>
+                <div className="text-[11px] text-neutral-400 leading-relaxed">
+                  Use the toolbar above to change pages, zoom, rotate, or search text inside the PDF. Select a PDF from the file list to switch documents.
+                </div>
+                {currentPdfFile && (
+                  <div className="text-[11px] text-red-300 bg-red-950/30 border border-red-900/50 rounded-lg px-2.5 py-1.5 flex items-center gap-2 truncate">
+                    <FileText className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate font-mono">{currentPdfFile.original_name}</span>
+                  </div>
+                )}
+              </div>
+              )}
 
               {/* Files List */}
               <div className="bg-[#1f1f28] border border-[#2e2e3c] rounded-xl p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-white flex items-center gap-2">
                     <FileCode className="w-4 h-4 text-blue-400" />
-                    Model Files ({model?.files.length || 0})
+                    Files ({model?.files.length || 0})
                   </h3>
-                  <span className="text-[11px] text-neutral-400">Click any file to view in 3D</span>
+                  <span className="text-[11px] text-neutral-400">Click a file to open it</span>
                 </div>
 
                 <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1">
                   {model?.files.map((file) => {
-                    const isCurrent = file.id === currentActiveFile?.id;
+                    const fileIsPdf = isPdfFile(file);
+                    const isCurrent = viewerTab === 'pdf'
+                      ? file.id === currentPdfFile?.id
+                      : file.id === currentActiveFile?.id;
                     return (
                       <div
                         key={file.id}
-                        onClick={() => setSelectedFileId(file.id)}
+                        onClick={() => handleSelectFile(file)}
                         className={`flex items-center justify-between p-2.5 rounded-lg text-xs cursor-pointer transition-all border ${
                           isCurrent
                             ? 'bg-blue-950/30 border-blue-500/60 shadow-sm shadow-blue-950/30'
@@ -840,6 +978,13 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                               </span>
                             )}
 
+                            {fileIsPdf && (
+                              <span className="flex items-center gap-1 px-1.5 py-0.2 bg-red-500/20 text-red-300 border border-red-500/40 rounded text-[9px] font-mono shrink-0">
+                                <FileText className="w-2.5 h-2.5" />
+                                PDF
+                              </span>
+                            )}
+
                             {isCurrent && (
                               <span className="flex items-center gap-1 px-1.5 py-0.2 bg-blue-600/30 text-blue-400 border border-blue-500/40 rounded text-[9px] font-mono shrink-0">
                                 <Eye className="w-2.5 h-2.5" />
@@ -855,16 +1000,16 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                         <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                           {!isCurrent && (
                             <button
-                              onClick={() => setSelectedFileId(file.id)}
+                              onClick={() => handleSelectFile(file)}
                               className="flex items-center gap-1 px-2 py-1 text-[10px] text-blue-400 hover:text-white bg-blue-950/50 hover:bg-blue-600 border border-blue-800/50 rounded transition-colors"
-                              title="Load this file into the 3D viewport"
+                              title={fileIsPdf ? 'Open this PDF' : 'Load this file into the 3D viewport'}
                             >
                               <Eye className="w-3 h-3" />
                               <span>View</span>
                             </button>
                           )}
 
-                          {isOwnerOrAdmin && file.is_primary_3d !== 1 && (
+                          {isOwnerOrAdmin && !fileIsPdf && file.is_primary_3d !== 1 && (
                             <button
                               onClick={() => handleSetPrimaryFile(file.id)}
                               className="px-2 py-1 text-[10px] text-neutral-400 hover:text-white bg-[#22222c] hover:bg-[#2c2c38] rounded transition-colors"
@@ -1017,7 +1162,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                 <input
                   type="file"
                   multiple
-                  accept=".stl,.3mf,.obj,.zip,.7z"
+                  accept=".stl,.3mf,.obj,.pdf,.zip,.7z"
                   ref={fileInputRef}
                   className="hidden"
                   onChange={handleFileUpload}
@@ -1040,7 +1185,7 @@ export const ModelViewerModal: React.FC<ModelViewerModalProps> = ({
                     className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-400 hover:text-red-300 bg-red-950/30 hover:bg-red-950/60 border border-red-900/50 rounded-lg transition-colors"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
-                    Delete Model Asset
+                    {isDocumentItem ? 'Delete Document' : 'Delete Model Asset'}
                   </button>
                 </div>
               )}

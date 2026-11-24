@@ -1,7 +1,8 @@
 import React, { useEffect } from 'react';
-import { Heart, RefreshCw, Layers, Box } from 'lucide-react';
+import { Heart, RefreshCw, Layers, Box, FileText } from 'lucide-react';
 import { ModelItem } from '../types';
 import { renderThumbnailInBrowser } from '../utils/clientThumbnailRenderer';
+import { isPdfFile } from '../utils/fileTypes';
 
 interface ModelCardProps {
   model: ModelItem;
@@ -18,20 +19,22 @@ export const ModelCard: React.FC<ModelCardProps> = ({
   onRetryThumbnail,
   onThumbnailUpdated,
 }) => {
+  const isDocument = model.item_type === 'document' || (model.primary_file ? isPdfFile(model.primary_file) : false);
   const primaryExt = model.primary_file
     ? model.primary_file.original_name.split('.').pop()?.toUpperCase()
-    : '3D';
+    : isDocument ? 'PDF' : '3D';
 
-  // Automatically attempt client-side WebGL capture fallback if thumbnail is pending or failed
+  // PDF thumbnails are rendered on page 1 by the server; the WebGL fallback
+  // only applies to 3D models.
   useEffect(() => {
-    if (model.thumbnail_status !== 'completed' && model.primary_file?.file_path) {
+    if (!isDocument && model.thumbnail_status !== 'completed' && model.primary_file?.file_path) {
       renderThumbnailInBrowser(model.id, model.primary_file.file_path, (newThumb) => {
         if (onThumbnailUpdated) {
           onThumbnailUpdated(model.id, newThumb);
         }
       });
     }
-  }, [model.id, model.thumbnail_status, model.primary_file?.file_path]);
+  }, [isDocument, model.id, model.thumbnail_status, model.primary_file?.file_path]);
 
   return (
     <div
@@ -55,7 +58,9 @@ export const ModelCard: React.FC<ModelCardProps> = ({
           <div className="flex flex-col items-center justify-center p-6 text-center">
             <RefreshCw className="w-8 h-8 text-blue-400 animate-spin mb-2.5 opacity-80" />
             <span className="text-xs font-medium text-neutral-300">
-              {model.thumbnail_status === 'processing' ? 'Rendering 512px view...' : 'Queued in render queue...'}
+              {isDocument
+                ? (model.thumbnail_status === 'processing' ? 'Rendering first page...' : 'Queued in render queue...')
+                : (model.thumbnail_status === 'processing' ? 'Rendering 512px view...' : 'Queued in render queue...')}
             </span>
             <span className="text-[10px] text-neutral-500 mt-1">Headless Chromium worker</span>
           </div>

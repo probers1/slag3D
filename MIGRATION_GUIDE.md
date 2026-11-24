@@ -3,13 +3,15 @@
 ## Overview
 Versioned schema management ensuring safe database upgrades across environments.
 
-## Current Version: 4
+## Current Version: 5
 
 | Version | Description | Tables Added |
 |---------|-------------|--------------|
 | v1 | Initial schema | users, models, files, tags, model_tags, favorites, collections, collection_models, auth_tokens (9 total) |
 | v2 | Metadata enhancement | width/height columns on models and files |
-| v3 | Soft delete for users | soft_delete flag |
+| v3 | Abandoned (wrong table) | — |
+| v4 | Soft delete for users | `is_deleted`, `deleted_at` on users |
+| v5 | PDF document support | `item_type` on models (`model` / `document`) |
 
 ## Schema Tracking Table
 
@@ -21,7 +23,7 @@ schema_versions (id INTEGER PRIMARY KEY CHECK(id=1), version INT UNIQUE, applied
 
 On startup, the system:
 1. Queries `schema_versions` for current version
-2. Executes pending migrations in order (001_prefix.ts → 004_prefix.ts)
+2. Executes pending migrations in order (001_prefix.ts → 005_prefix.ts)
 3. Records timestamp of each applied migration
 
 ## File Convention
@@ -32,6 +34,7 @@ Migration files in `server/migrations/`:
 002_add_metadata_columns.ts  -- Adds width/height columns  
 003_...                     -- Soft delete preparation (skipped)
 004_add_soft_delete_flag_for_users.ts  -- Implements soft delete for users
+005_add_item_type.ts                   -- Distinguishes 3D models from PDF items
 ```
 
 **Naming**: Prefixed with zero-padded version number. **Export**: Must return `{ version: number; timestamp: string }`.
@@ -57,7 +60,7 @@ sqlite3 data/vault.db "SELECT * FROM schema_versions;"
 
 # Expected output:
 # id  version  applied_at
-# 1   4
+# 1   5
 ```
 
 ## Rollback Procedure
@@ -81,6 +84,7 @@ sqlite3 data/vault.db "DELETE FROM schema_versions;"
 | v1 | Base tables (users, models, files, etc.) | Initial |
 | v2 | Metadata columns on models/files | 2026 |
 | v4 | Soft delete flag for users | Oct 2026 |
+| v5 | `item_type` on models for PDF documents | Nov 2026 |
 
 ---
-**Last Updated**: Nov 2026 — Version 4 active
+**Last Updated**: Nov 2026 — Version 5 active

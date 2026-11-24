@@ -8,30 +8,33 @@ import { db } from './db.ts';
 import { MODELS_DIR, TMP_UPLOADS_DIR, resolveUploadsPath } from './paths.ts';
 import { enqueueThumbnailRender } from '../lib/queue.ts';
 import {
-  MODEL_EXTENSIONS,
   UploadValidationError,
   extractZipArchive,
-  mimeTypeForModelExtension,
+  mimeTypeForExtension,
   modelExtensionOf,
+  documentExtensionOf,
+  uploadableExtensionOf,
   safeStoredFilename,
   type ExtractedFileInfo,
 } from './lib/uploadSecurity.ts';
 
 // Re-export the upload security primitives so existing import sites keep working.
 export {
-  MODEL_EXTENSIONS,
+  DOCUMENT_EXTENSIONS,
   UploadValidationError,
   extractZipArchive,
-  mimeTypeForModelExtension,
+  mimeTypeForExtension,
   modelExtensionOf,
+  documentExtensionOf,
+  uploadableExtensionOf,
   safeStoredFilename,
   type ExtractedFileInfo,
 } from './lib/uploadSecurity.ts';
 
 const execAsync = promisify(exec);
 
-// Allowed file extensions (3D models and safe archives)
-const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.zip', '.7z'];
+// Allowed file extensions (3D models, PDF documents and safe archives)
+const ALLOWED_EXTENSIONS = ['.stl', '.3mf', '.obj', '.pdf', '.zip', '.7z'];
 
 // 2D image extensions (for rejection)
 const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'];
@@ -46,19 +49,19 @@ function validateFile(file: Express.Multer.File): { valid: boolean; error?: Erro
   // Handle files without extension
   if (ext === '') {
     console.error(`[UPLOAD SECURITY] Rejected file without extension: ${originalName}`);
-    return { valid: false, error: new UploadValidationError(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+    return { valid: false, error: new UploadValidationError(`File ${originalName.split('.')[0] || originalName}: File has no extension. Use only .stl, .3mf, .obj (models), .pdf (documents) or .zip, .7z (archives).`) };
   }
 
   // Reject image files
   if (IMAGE_EXTENSIONS.includes(ext)) {
     console.error(`[UPLOAD SECURITY] Image file rejected: ${originalName}`);
-    return { valid: false, error: new UploadValidationError(`Image file (.${ext}) is not allowed for 3D models. Supported formats: .stl, .3mf, .obj (models) or .zip, .7z (archives).`) };
+    return { valid: false, error: new UploadValidationError(`Image file (.${ext}) is not allowed. Supported formats: .stl, .3mf, .obj (models), .pdf (documents) or .zip, .7z (archives).`) };
   }
 
   // Check extension against allowlist
   if (!ALLOWED_EXTENSIONS.includes('.' + ext)) {
     console.error(`[UPLOAD SECURITY] Unsupported extension: ${ext} in ${originalName}`);
-    return { valid: false, error: new UploadValidationError(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models) or .zip, .7z (archives) are allowed.`) };
+    return { valid: false, error: new UploadValidationError(`Unsupported format (.${ext}). Only .stl, .3mf, .obj (3D models), .pdf (documents) or .zip, .7z (archives) are allowed.`) };
   }
 
   // NOTE: the archive *file name* is deliberately not inspected. The archive
@@ -131,14 +134,14 @@ export async function extract7zArchive(
       .map((f) => path.join(tempDir, f))
       .filter((p: string) => {
         try {
-          return fs.statSync(p).isFile() && modelExtensionOf(p) !== null;
+          return fs.statSync(p).isFile() && uploadableExtensionOf(p) !== null;
         } catch {
           return false;
         }
       });
 
     for (const p of extractedEntries) {
-      const entryExt = modelExtensionOf(p)!;
+      const entryExt = uploadableExtensionOf(p)!;
       const destName = safeStoredFilename(path.basename(p), entryExt);
       const destPath = path.join(modelDir, destName);
       fs.copyFileSync(p, destPath);
@@ -148,7 +151,7 @@ export async function extract7zArchive(
         id: uuidv4(),
         filename: destName,
         original_name: path.basename(p),
-        mime_type: mimeTypeForModelExtension(entryExt),
+        mime_type: mimeTypeForExtension(entryExt),
         file_size: stat.size,
         file_path: `/uploads/models/${modelId}/${destName}`,
         is_primary_3d: 0,
@@ -186,18 +189,17 @@ export async function processModelFiles(
       const extracted = await extract7zArchive(file.path, modelId, modelDir);
       processedFiles.push(...extracted);
     } else {
-      // Direct 3D model file (.stl, .obj, .3mf).
-      // The extension is re-validated here: the payload is written into the
-      // browser-served uploads directory, so only allowlisted model formats
-      // may be stored.
-      const modelExt = modelExtensionOf(file.originalname);
-      if (!modelExt) {
+      // Direct 3D model / PDF file. The extension is re-validated here: the
+      // payload is written into the browser-served uploads directory, so only
+      // allowlisted model and document formats may be stored.
+      const fileExt = uploadableExtensionOf(file.originalname);
+      if (!fileExt) {
         console.warn(`[UPLOAD SECURITY] Rejected file with unsupported type: ${file.originalname}`);
         try { fs.unlinkSync(file.path); } catch {}
         continue;
       }
 
-      const destFilename = safeStoredFilename(file.originalname, modelExt);
+      const destFilename = safeStoredFilename(file.originalname, fileExt);
       const destPath = path.join(modelDir, destFilename);
       fs.renameSync(file.path, destPath);
 
@@ -205,7 +207,7 @@ export async function processModelFiles(
         id: uuidv4(),
         filename: destFilename,
         original_name: file.originalname,
-        mime_type: mimeTypeForModelExtension(modelExt),
+        mime_type: mimeTypeForExtension(fileExt),
         file_size: file.size,
         file_path: `/uploads/models/${modelId}/${destFilename}`,
         is_primary_3d: 0,
@@ -215,7 +217,7 @@ export async function processModelFiles(
 
   if (processedFiles.length === 0) {
     throw new UploadValidationError(
-      'No valid 3D model files (.stl, .3mf, .obj) were found in the upload.'
+      'No valid 3D model (.stl, .3mf, .obj) or PDF document files were found in the upload.'
     );
   }
 
@@ -242,16 +244,21 @@ export async function processModelFiles(
     insertStmt.run(pf.id, modelId, pf.filename, pf.original_name, pf.mime_type, pf.file_size, pf.file_path, pf.is_primary_3d);
   }
 
-  // Queue thumbnail render for primary 3D file (initial upload only)
+  // Queue thumbnail render for the primary 3D file, or page 1 of the largest
+  // PDF when the upload is document-only (initial upload only).
   if (!options.isSupplementary) {
     const primary = processedFiles.find((f) => f.is_primary_3d === 1);
-    if (primary) {
-      const primaryExt = path.extname(primary.original_name).toLowerCase().replace('.', '') as 'stl' | 'obj' | '3mf';
-      const relativeOrAbs = resolveUploadsPath(primary.file_path);
+    const largestPdf = processedFiles
+      .filter((f) => documentExtensionOf(f.original_name) !== null)
+      .sort((a, b) => b.file_size - a.file_size)[0];
+    const renderFile = primary || largestPdf;
+    if (renderFile) {
+      const ext = path.extname(renderFile.original_name).toLowerCase().replace('.', '');
+      const fileType = ext === 'pdf' ? 'pdf' : (['stl', 'obj', '3mf'].includes(ext) ? ext as 'stl' | 'obj' | '3mf' : 'stl');
       enqueueThumbnailRender({
         modelId,
-        filePath: relativeOrAbs,
-        fileType: ['stl', 'obj', '3mf'].includes(primaryExt) ? primaryExt : 'stl',
+        filePath: resolveUploadsPath(renderFile.file_path),
+        fileType,
       });
     }
   }

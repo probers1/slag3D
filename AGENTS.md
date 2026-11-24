@@ -35,10 +35,10 @@ rm -f data/*.db*    # Reset database
 | Development | `./data/vault.db` |
 | Production | `/data/vault.db` |
 
-### Schema Version: 4
+### Schema Version: 5
 
 ```sql
-users, models, files, tags, model_tags, 
+users, models (item_type: model | document), files, tags, model_tags, 
 favorites, collections, collection_models, auth_tokens
 ```
 
@@ -106,6 +106,12 @@ slag3D/
 3. Queue job → `lib/queue.ts` (p-queue, concurrency=2)
 4. Render → Puppeteer + Three.js → 512×512 PNG
 
+### PDF Documents
+- `.pdf` may be uploaded directly, inside `.zip`/`.7z`, or via "Add Files"; archives keep PDF entries alongside 3D files.
+- PDF-only uploads become `models.item_type = 'document'` items; PDFs added to a model stay attachments and never become `is_primary_3d`.
+- Thumbnails render page 1 with pdf.js inside Puppeteer (`lib/thumbnail.ts`).
+- In-app reading uses `src/components/PdfViewer.tsx` (pdfjs-dist); files are fetched with the authenticated `apiFetch` helper so `Content-Disposition: attachment` on `/uploads/models/*` is irrelevant.
+
 ### Puppeteer Flags
 ```bash
 --no-sandbox --disable-setuid-sandbox --use-gl=angle \
@@ -133,7 +139,7 @@ See [SECURITY_GUIDE.md](./SECURITY_GUIDE.md) for security implementation details
 ## API Endpoints Quick Reference
 
 **Models**: `GET /api/models?page=?&search=...&tag=...`  
-**Upload**: `POST /api/models` — Accepts .stl, .3mf, .obj, .zip, .7z (max 300MB)  
+**Upload**: `POST /api/models` — Accepts .stl, .3mf, .obj, .pdf, .zip, .7z (max 300MB)  
 **Collections**: Nested folder system with model assignments  
 **Tags**: Cloud tagging system
 

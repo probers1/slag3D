@@ -147,6 +147,7 @@ const MODEL_CONTENT_TYPES: Record<string, string> = {
   '.stl': 'model/stl',
   '.3mf': 'model/3mf',
   '.obj': 'model/obj',
+  '.pdf': 'application/pdf',
 };
 
 // Serve uploaded files statically

@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { v1_initial_schema } from './001_initial_schema';
 import { v2_add_metadata_columns } from './002_add_metadata_columns';
 import { v4_add_soft_delete_column_to_users } from './004_add_soft_delete_flag_for_users';
+import { v5_add_item_type } from './005_add_item_type';
 
 // Helper types
 type MigrationFunc = (db: Database.Database) => { version: number; timestamp: string };
@@ -74,6 +75,7 @@ export function runMigrations(db: Database.Database): { applied: number[]; skipp
     { version: 1, func: v1_initial_schema },
     { version: 2, func: v2_add_metadata_columns },
     { version: 4, func: v4_add_soft_delete_column_to_users },
+    { version: 5, func: v5_add_item_type },
   ];
 
   for (const { version, func } of migrations) {
@@ -120,4 +122,4 @@ export function runMigrations(db: Database.Database): { applied: number[]; skipp
 // =============================================================================
 
 // Re-export for convenience (handled by tsx runtime compilation)
-export { v1_initial_schema, v2_add_metadata_columns, v4_add_soft_delete_column_to_users };
+export { v1_initial_schema, v2_add_metadata_columns, v4_add_soft_delete_column_to_users, v5_add_item_type };

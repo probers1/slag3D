@@ -1,9 +1,12 @@
 import path from "path";
 import fs from "fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { createRequire } from "node:module";
 import puppeteer from "puppeteer";
 import { THUMBNAILS_DIR, THREE_BUNDLE_PATH, resolveUploadsPath } from "../server/paths.ts";
 
-export interface RenderJobData { modelId: string; filePath: string; fileType: "stl" | "obj" | "3mf"; }
+export interface RenderJobData { modelId: string; filePath: string; fileType: "stl" | "obj" | "3mf" | "pdf"; }
 
 function getThreeBundle() {
   const candidates = [THREE_BUNDLE_PATH, path.resolve(process.cwd(), "lib", "three-bundle.js")];
@@ -78,7 +81,124 @@ function buildModelScript(filePath: string): string {
   return "";
 }
 
-export async function renderModelThumbnail({ modelId, filePath }: any): Promise<string> {
+const nodeRequire = createRequire(import.meta.url);
+const PDFJS_MODULE_PATH = nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.mjs');
+const PDFJS_WORKER_PATH = nodeRequire.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+
+/**
+ * Render the first page of a PDF into the standard 512x512 card thumbnail.
+ *
+ * pdf.js runs inside Puppeteer against a short-lived loopback server. Serving
+ * the module, worker and document over HTTP (instead of injecting megabytes
+ * through CDP) keeps memory bounded and gives the worker a normal same-origin
+ * environment.
+ */
+async function renderPdfThumbnail(modelId: string, filePath: string): Promise<string> {
+    const pdfBytes = fs.readFileSync(filePath);
+    if (pdfBytes.length > 150 * 1024 * 1024) {
+        throw new Error(`PDF too large for thumbnail rendering (${pdfBytes.length} bytes)`);
+    }
+
+    const pdfjsSource = fs.readFileSync(PDFJS_MODULE_PATH);
+    const workerSource = fs.readFileSync(PDFJS_WORKER_PATH);
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+      html,body{margin:0;padding:0;width:512px;height:512px;background:#ffffff;overflow:hidden}
+      canvas{display:block}
+    </style></head><body></body></html>`;
+
+    const server = http.createServer((req, res) => {
+        const url = (req.url || '').split('?')[0];
+        if (url === '/pdf.mjs') {
+            res.writeHead(200, { 'Content-Type': 'text/javascript' });
+            return res.end(pdfjsSource);
+        }
+        if (url === '/pdf.worker.mjs') {
+            res.writeHead(200, { 'Content-Type': 'text/javascript' });
+            return res.end(workerSource);
+        }
+        if (url === '/document.pdf') {
+            const range = req.headers.range;
+            const match = range?.match(/bytes=(\d+)-(\d*)/);
+            if (match) {
+                const start = Number(match[1]);
+                const end = match[2] ? Number(match[2]) : pdfBytes.length - 1;
+                res.writeHead(206, {
+                    'Content-Type': 'application/pdf',
+                    'Accept-Ranges': 'bytes',
+                    'Content-Range': `bytes ${start}-${end}/${pdfBytes.length}`,
+                    'Content-Length': end - start + 1,
+                });
+                return res.end(pdfBytes.subarray(start, end + 1));
+            }
+            res.writeHead(200, {
+                'Content-Type': 'application/pdf',
+                'Accept-Ranges': 'bytes',
+                'Content-Length': pdfBytes.length,
+            });
+            return res.end(pdfBytes);
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end(html);
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+
+    let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+    try {
+        browser = await puppeteer.launch({
+            headless: true,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--no-first-run',
+            ],
+        });
+        const page = await browser.newPage();
+        page.on('pageerror', (err) => {
+            console.warn(`[Thumbnail] PDF page error: ${err instanceof Error ? err.message : String(err)}`);
+        });
+        await page.setViewport({ width: 512, height: 512, deviceScaleFactor: 1 });
+        await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load', timeout: DEFAULT_TIMEOUT });
+
+        await page.evaluate(async () => {
+            const moduleUrl = '/pdf.mjs';
+            const pdfjs = await import(moduleUrl);
+            pdfjs.GlobalWorkerOptions.workerSrc = '/pdf.worker.mjs';
+            const doc = await pdfjs.getDocument({ url: '/document.pdf', useSystemFonts: true }).promise;
+            const pdfPage = await doc.getPage(1);
+            const base = pdfPage.getViewport({ scale: 1 });
+            const scale = Math.min(512 / base.width, 512 / base.height);
+            const viewport = pdfPage.getViewport({ scale });
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d')!;
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 512, 512);
+            ctx.save();
+            ctx.translate((512 - viewport.width) / 2, (512 - viewport.height) / 2);
+            await pdfPage.render({ canvasContext: ctx, viewport, background: '#ffffff' }).promise;
+            ctx.restore();
+            document.body.appendChild(canvas);
+        });
+
+        const outputDir = THUMBNAILS_DIR;
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        const outputPath = path.resolve(outputDir, `${modelId}.png`);
+        await page.screenshot({ path: outputPath + '.tmp', type: 'png' });
+        fs.renameSync(outputPath + '.tmp', outputPath);
+        return `/uploads/thumbnails/${modelId}.png`;
+    } finally {
+        if (browser) { try { await browser.close(); } catch {} }
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+}
+
+export async function renderModelThumbnail({ modelId, filePath, fileType }: RenderJobData): Promise<string> {
+    if (fileType === 'pdf') return renderPdfThumbnail(modelId, filePath);
+
     const outputDir = THUMBNAILS_DIR;
     if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 

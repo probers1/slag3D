@@ -9,17 +9,21 @@ import { v4 as uuidv4 } from 'uuid';
  * This module is intentionally free of database / browser dependencies so it
  * can be unit tested in isolation.
  *
- * Core invariant: only 3D model payloads may ever be written into the
- * uploads directory. The uploads directory is served back to browsers from
- * the application's own origin (`/uploads/...`), so storing anything the
- * browser can render inline (.html, .svg, .js, ...) would turn a routine
- * upload into a stored-XSS vector.
+ * Core invariant: only 3D model payloads and PDF documents may ever be
+ * written into the uploads directory. The uploads directory is served back
+ * to browsers from the application's own origin (`/uploads/...`), so storing
+ * anything the browser can render actively (.html, .svg, .js, ...) would turn
+ * a routine upload into a stored-XSS vector. PDFs are inert payloads: they
+ * are delivered as downloads and rendered by pdf.js from fetched bytes, so
+ * embedded scripts/actions are never executed by the application.
  */
 
 /**
  * Extensions that may be written into the uploads directory.
  */
 export const MODEL_EXTENSIONS = ['.stl', '.3mf', '.obj'];
+export const DOCUMENT_EXTENSIONS = ['.pdf'];
+export const UPLOADABLE_EXTENSIONS = [...MODEL_EXTENSIONS, ...DOCUMENT_EXTENSIONS];
 
 export interface ExtractedFileInfo {
   id: string;
@@ -42,6 +46,18 @@ export function modelExtensionOf(filename: string): string | null {
   if (!filename) return null;
   const ext = path.extname(String(filename)).toLowerCase();
   return MODEL_EXTENSIONS.includes(ext) ? ext : null;
+}
+
+/** Resolve an allowlisted document (PDF) extension, or `null` for anything else. */
+export function documentExtensionOf(filename: string): string | null {
+  if (!filename) return null;
+  const ext = path.extname(String(filename)).toLowerCase();
+  return DOCUMENT_EXTENSIONS.includes(ext) ? ext : null;
+}
+
+/** The single source of truth for "may this file be stored in uploads/". */
+export function uploadableExtensionOf(filename: string): string | null {
+  return modelExtensionOf(filename) || documentExtensionOf(filename);
 }
 
 /**
@@ -81,13 +97,18 @@ export function mimeTypeForModelExtension(ext: string): string {
   return 'application/octet-stream';
 }
 
+export function mimeTypeForExtension(ext: string): string {
+  if (DOCUMENT_EXTENSIONS.includes(ext)) return 'application/pdf';
+  return mimeTypeForModelExtension(ext);
+}
+
 /**
  * Extract a ZIP archive into the model directory.
  *
  * SECURITY: a strict extension allowlist is applied to every entry. Entries
- * that are not 3D model payloads are skipped instead of being written to
- * disk, so an archive can never smuggle active content (HTML/SVG/JS/...)
- * into the browser-served uploads directory.
+ * that are not 3D model payloads or PDF documents are skipped instead of
+ * being written to disk, so an archive can never smuggle active content
+ * (HTML/SVG/JS/...) into the browser-served uploads directory.
  */
 export async function extractZipArchive(
   zipPath: string,
@@ -108,8 +129,8 @@ export async function extractZipArchive(
       // Skip hidden / macOS metadata files
       if (baseName.startsWith('.') || entry.name.includes('__MACOSX')) continue;
 
-      // Security: only allowlisted 3D model payloads may be written to disk.
-      const entryExt = modelExtensionOf(baseName);
+      // Security: only inert 3D model payloads and PDF documents may be written to disk.
+      const entryExt = uploadableExtensionOf(baseName);
       if (!entryExt) {
         console.warn(`[UPLOAD SECURITY] Skipping archive entry with unsupported type: ${entry.name}`);
         continue;
@@ -125,7 +146,7 @@ export async function extractZipArchive(
         id: uuidv4(),
         filename: destName,
         original_name: baseName,
-        mime_type: mimeTypeForModelExtension(entryExt),
+        mime_type: mimeTypeForExtension(entryExt),
         file_size: stat.size,
         file_path: `/uploads/models/${modelId}/${destName}`,
         is_primary_3d: 0,
