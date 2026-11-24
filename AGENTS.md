@@ -3,36 +3,45 @@
 ## Commands
 
 - `npm run dev` — one process: Express + Vite middleware on `:3000`. Needs `.env`
-  (copy `.env.example`; `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, `SESSION_SECRET` ≥32 chars,
-  entropy-checked at startup). `GOOSE_SEED_DB=true` or `ADMIN_PASSWORD` seeds the first admin
-  (dev default: `admin` / `admin123`).
-- `npm run build` → Vite client + esbuild server (`dist/server.js`); `npm start` runs the bundle.
-  `NODE_ENV=production` is required for the bundle to serve `dist/` (otherwise Vite middleware).
+  (copy `.env.example`; `JWT_SECRET`, `REFRESH_TOKEN_SECRET`, `SESSION_SECRET` ≥32 chars with
+  placeholder values rejected at startup; low Shannon entropy only logs a warning).
+  `GOOSE_SEED_DB=true` or `ADMIN_PASSWORD` seeds the first admin (dev default: `admin` / `admin123`).
+- `npm run build` → Vite client + esbuild server (`dist/server.js`, target Node 22); `npm start`
+  runs the bundle. `NODE_ENV=production` is required for the bundle to serve `dist/` (otherwise Vite
+  middleware).
 - `npm run typecheck` (`tsc --noEmit`, no output). There is **no** lint or format script.
-- Tests: `npm test` (password smoke), `npm run test:upload-security`, `npm run test:prod-paths`.
-  - `test:prod-paths` copies `dist/index.html` — run `npm run build:client` first.
+- Tests: `npm test` (password smoke), `npm run test:upload-security`, `npm run test:prod-paths`,
+  `npm run test:pdf-thumbnail`.
+  - `test:prod-paths` needs `dist/index.html` from `npm run build:client`; it rebuilds the server
+    bundle itself and boots it in a temp directory.
+  - `test:pdf-thumbnail` renders a generated PDF and asserts a non-blank 512×512 PNG.
   - `tests/priority{1,2,3}_fixes.test.ts` have no npm script: `npx tsx tests/priority1_fixes.test.ts`.
-- Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm test`.
-- `npm run set-admin -- 'NewPassword'` creates/resets the admin in SQLite; works while the
-  server is running. `npm run update` runs `scripts/update.sh`.
+- Full check: `npm run typecheck && npm run build && npm run test:upload-security && npm run test:prod-paths && npm run test:pdf-thumbnail && npm test`.
+- `npm run set-admin -- 'NewPassword'` creates/resets the account named by `ADMIN_USER` (default
+  `admin`) in the existing SQLite DB, restores it if soft-deleted, and works while the server is
+  running. `npm run update` runs `scripts/update.sh`.
 
 ## Layout & wiring
 
-- `server.ts` is the only entrypoint: `initDatabase()` → upload dirs → auth/CSRF → `/api/*` routers
-  → `/uploads` static → Vite (dev) or `dist/` (prod).
+- `server.ts` is the only entrypoint: `initDatabase()` → JSON body limits → upload dirs + legacy
+  migration → SQLite session store → auth/CSRF → `/uploads` static (with JSON 404) → `/api/*` routers
+  → Vite (dev) or `dist/` (prod).
 - `server/` = Express backend/routes/migrations; `src/` = React; `lib/` = server-only thumbnail
   engine (`thumbnail.ts`) + render queue (`queue.ts`, concurrency 2).
-- Relative imports in `server/` and `lib/` use explicit `.ts` extensions
-  (`allowImportingTsExtensions: true`). Avoid `@/`: configured inconsistently (tsconfig → repo
+- Relative imports in `server/` and `lib/` generally use explicit `.ts` extensions, except migration
+  imports in `server/migrations/index.ts`. Avoid `@/`: configured inconsistently (tsconfig → repo
   root, Vite → `src`) and unused.
-- All filesystem paths come from `server/paths.ts`. Never use `process.cwd()`/`__dirname` for
-  uploads — the bundled server would write to one place and serve from another, producing 404s or
+- Upload/thumbnail paths come from `server/paths.ts`; DB path resolution lives in `server/db.ts` and
+  the production static dir in `server.ts`. Never use `process.cwd()`/`__dirname` to resolve upload
+  storage — the bundled server would write to one place and serve from another, producing 404s or
   `Invalid typed array length` in the viewer. `UPLOADS_DIR` overrides the default; Docker `/uploads`,
   LXC `/opt/slag3D/uploads`. `npm run test:prod-paths` guards this regression.
-- `server/lib/uploadSecurity.ts` is the single source for allowed extensions, MIME types, and
-  archive filtering. Keep `modelExtensionOf()` 3D-only; PDFs use `documentExtensionOf()` /
-  `uploadableExtensionOf()`. Active content (html/js/svg) stays blocked in archives.
-  Caps: 300MB/file (`server/upload.ts`), 20 files/request (`server/routes/models.ts`).
+- `server/lib/uploadSecurity.ts` is the canonical source for storable extensions and archive entry
+  filtering; top-level validation still duplicates the allowlist in `server/upload.ts`, and served
+  MIME types are also set in `server.ts`. Keep `modelExtensionOf()` 3D-only; PDFs use
+  `documentExtensionOf()` / `uploadableExtensionOf()`. Active content (html/js/svg) stays blocked in
+  archives. Caps: 300MB/file (`server/upload.ts`), 20 files for a new model upload and 10 per
+  "Add Files" request (`server/routes/models.ts`).
 
 ## Database & migrations
 
@@ -50,9 +59,11 @@
 
 ## Auth & API
 
-- Two layers: session cookie (`connect.sid`) + JWT bearer (access 1h, refresh 7d).
-- Unsafe `/api` methods need an `x-csrf-token` header matching the cookie; the frontend's
-  `apiFetch()` (`src/utils/api.ts`) adds Bearer + CSRF. Media anchors can append `?token=`.
+- Auth resolves from the session cookie or a JWT supplied as `Authorization: Bearer`, `x-auth-token`,
+  or query `token` (`refresh` tokens are also accepted as bearer); access 1h, refresh 7d.
+- Unsafe `/api` methods require `x-csrf-token` to match the `slag3d_csrf_token` cookie, except the
+  exempt auth/health/tags paths in `server/middleware.ts`; the frontend's `apiFetch()`
+  (`src/utils/api.ts`) adds Bearer + CSRF. Media anchors can append `?token=`.
 - `GET /api/models` searches title, description **and attachment filenames**. `item_type` is
   `model | document`; collections/favorites are unchanged by PDFs.
 
@@ -66,12 +77,15 @@
 
 ## Operational gotchas
 
-- Edit `server/routes/*.ts` → restart the server; edit `src/` → HMR. `DISABLE_HMR=true` disables
-  HMR **and** file watching.
-- Thumbnail failures are logged by the queue, not returned in the upload response; stuck renders
-  usually clear on restart.
+- Edit `server/routes/*.ts` → restart; in `npm run dev`, `src/` edits use HMR (`DISABLE_HMR=true`
+  disables HMR and file watching); in production, rebuild with `npm run build`.
+- Thumbnail failures are logged by the queue, not returned in the upload response; a restart clears
+  the in-memory queue, so jobs already marked `processing`/`failed` are not re-queued server-side.
+  3D models get an automatic in-browser WebGL fallback that persists a thumbnail on next page load
+  (`ModelCard.tsx`); `POST /api/models/:id/regenerate-thumbnail` remains the way to request a fresh
+  server-side headless render (including for PDFs).
 - `pkill -9 node` kills every Node process on the machine — use a targeted kill if other projects
   run here.
-- Deployment details: `scripts/install-lxc.sh` (verifies admin credentials) or `docker compose up -d`
-  (volumes `slag3d_data`, `slag3d_uploads`). More detail in `README.md`, `MIGRATION_GUIDE.md`,
-  and `SECURITY_GUIDE.md`.
+- Deployment: the LXC installer expects the repo cloned to `/opt/slag3D`; `docker compose up -d`
+  needs the three secrets in `.env` and creates volumes `slag3d_vault_data` / `slag3d_vault_uploads`.
+  More detail in `README.md`, `MIGRATION_GUIDE.md`, and `SECURITY_GUIDE.md`.
